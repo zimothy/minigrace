@@ -7,6 +7,7 @@ import lexer
 import ast
 import parser
 import typechecker
+import utils
 import genc
 import genjs
 import buildinfo

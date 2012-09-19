@@ -1,6 +1,6 @@
 (function(global) {
 
-    var done, $true, $false;
+    var done, prelude, $true, $false;
 
     // Grace done constructor.
     function Done() {}
@@ -270,18 +270,21 @@
     });
     String.prototype['[]'] = String.prototype.at;
 
+    prelude =
+        { Done:    Done
+        , done:    done
+        , Object:  Object
+        , Boolean: Boolean
+        , Number:  Number
+        , String:  String
+        , 'true':  $true
+        , 'false': $false
+        };
+
     // Export grace object.
     global.grace =
-        { prelude:
-            { Done: Done
-            , done: done
-            , Object: Object
-            , Boolean: Boolean
-            , Number: Number
-            , String: String
-            , 'true': $true
-            , 'false': $false
-            }
+        { prelude: function() {
+            return prelude;
         };
 
 
