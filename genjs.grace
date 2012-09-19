@@ -129,13 +129,19 @@ class javascriptCompiler.new(outFile) {
                     { compileExpression(param) }
                 }) separatedBy(", ")
             }
-        }) separatedBy(") \{ return function(")
+        }) separatedBy {
+            increaseIndent
+            write(") \{\n{indent}return function(")
+        }
 
         wrap(") \{", {
             compileExecution(node.body)
-        }, "\}")
+        }, "\}\n")
 
-        write("\n")
+        for(1..(node.signature.size - 1)) do {
+            decreaseIndent
+            write("{indent}\}\n")
+        }
     }
 
     // Compiles a Grace def node into a const declaration.
@@ -437,12 +443,12 @@ class javascriptCompiler.new(outFile) {
     }
 
     // Writes a list of compilations, separated by the given string.
-    method doAll(list : List) separatedBy(by : String) {
+    method doAll(list : List) separatedBy(by) {
         var once := false
 
         for(list) do { value ->
             if(once) then {
-                write(by)
+                writeOrApply(by)
             }
 
             writeOrApply(value)
