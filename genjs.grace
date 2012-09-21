@@ -4,12 +4,11 @@ import util
 import utils
 
 // The name for this is prone to change, so it makes sense to centralize it.
-def unitValue = "noSuchValue"
+def unitValue = "prelude.done"
 
 // Compiles the given nodes into a module with the given name.
 method compile(nodes : List, outFile, moduleName : String, runMode : String,
                buildType : String, libPath : String | Boolean) is public {
-
     util.log_verbose("generating ECMAScript code.")
 
     def compiler = javascriptCompiler.new(outFile)
@@ -46,12 +45,16 @@ class javascriptCompiler.new(outFile) {
                     line("var {module} = $.{module}()")
                 }
 
+                line("var outer = prelude")
+                line("$ = $['native']")
+
                 // The module is compiled as a standard object.
                 statement("return ", {
 
                     // TODO Search for an inherits node at the top-level.
                     compileObject(ast.objectNode.new(body, false))
                 })
+
             }, "\}")
 
             // Modules are singletons. This method of importing ensures that
@@ -105,7 +108,7 @@ class javascriptCompiler.new(outFile) {
         } case { "vardec" ->
             compileVar(node)
         } case { "return" ->
-            compileReturn(node)
+            statement("", { compileReturn(node) })
         } case { "if" ->
             compileIf(node)
         } case { "bind" ->
@@ -135,7 +138,7 @@ class javascriptCompiler.new(outFile) {
         }
 
         wrap(") \{", {
-            compileExecution(node.body)
+            compileBodyWithReturn(node.body)
         }, "\}\n")
 
         for(1..(node.signature.size - 1)) do {
@@ -146,26 +149,65 @@ class javascriptCompiler.new(outFile) {
 
     // Compiles a Grace def node into a const declaration.
     method compileDef(node) {
-        statement("var {escapeIdentifier(node.name.value)} = ", {
+        def name = node.name.value
+        def escaped = escapeIdentifier(name)
+
+        statement("var {escaped} = ", {
             compileExpression(node.value)
         })
+
+        if(utils.for(node.annotations) some { annotation ->
+            annotation.value == "readable"
+        }) then {
+            compileGetter(name, escaped, node.value)
+        }
     }
 
     // Compiles a Grace var node into a var declaration.
     method compileVar(node) {
-        statement("var {escapeIdentifier(node.name.value)}", {
+        def name = node.name.value
+        def escaped = escapeIdentifier(name)
+
+        statement("var {escaped}", {
             if(node.value != false) then {
                 write(" = ")
                 compileExpression(node.value)
             }
         })
+
+        if(utils.for(node.annotations) some { annotation ->
+            annotation.value == "readable"
+        }) then {
+            compileGetter(name, escaped, node.value)
+        }
+        
+        if(utils.for(node.annotations) some { annotation ->
+            annotation.value == "writable"
+        }) then {
+            wrapln("self[\"{name}:=\"] = function(value) \{", {
+                line("return ({escaped} = value, {unitValue})")
+            }, "\}")
+        }
+    }
+
+    method compileGetter(name : String, escaped : String, value) {
+        compileSelfAttach(name, {
+            line("return {escaped}")
+        })
+    }
+
+    method compileSelfAttach(name : String, body) {
+        wrapln("self" ++ if(utils.has("'") in(name)) then {
+            "[\"{name}\"]"
+        } else {
+            ".{name}"
+        } ++ " = function() \{", body, "\}")
     }
 
     // Compiles a Grace return node into a return declaration.
     method compileReturn(node) {
-        statement("return ", {
-            compileExpression(node.value)
-        })
+        write("throw ")
+        compileExpression(node.value)
     }
 
     // Compiles an if statement.
@@ -209,7 +251,7 @@ class javascriptCompiler.new(outFile) {
         } case { "bind" ->
             write("(")
             compileBind(node)
-            write(")")
+            write(", {unitValue})")
         } case { "member" ->
             compileMember(node)
         } case { "call" ->
@@ -226,6 +268,8 @@ class javascriptCompiler.new(outFile) {
             compileMatch(node)
         } case { "generic" ->
             compileExpression(node.value)
+        } case { "return" ->
+            compileReturn(node)
         } else {
             print("Unrecognised expression: {node.kind}")
             sys.exit(1)
@@ -252,7 +296,7 @@ class javascriptCompiler.new(outFile) {
     method compileObject(node) {
         wrap("(function() \{", {
 
-            line("var self = prelude.Object()")
+            line("var self = $.object()")
 
             // Compile the standard execution first. This will introduce the
             // values into the closure.
@@ -290,15 +334,15 @@ class javascriptCompiler.new(outFile) {
 
     // Compiles a block into an anonymous function.
     method compileBlock(node) {
-        write("function(")
+        write("$.block(function(")
 
         doAll(utils.map(node.params) with { param ->
             { compileExpression(param) }
         }) separatedBy(", ")
 
         wrap(") \{", {
-            compileExecution(node.body)
-        }, "\}")
+            compileBodyWithReturn(node.body)
+        }, "\})")
     }
 
     // Compiles a Grace bind into an assignment.
@@ -368,7 +412,7 @@ class javascriptCompiler.new(outFile) {
     }
 
     method compileArray(node) {
-        write("prelude.List(")
+        write("$.list(")
         doAll(utils.map(node.value) with { value ->
             compileExpression(value)
         }) separatedBy(", ")
@@ -389,6 +433,20 @@ class javascriptCompiler.new(outFile) {
                 compileExecution(body)
             }, "\})()")
         }
+    }
+
+    method compileBodyWithReturn(body : List) {
+        def last = body.pop
+
+        compileExecution(body)
+
+        statement("return ", {
+            compileExpression(if(last.kind == "return") then {
+                last.value
+            } else {
+                last
+            })
+        })
     }
 
 

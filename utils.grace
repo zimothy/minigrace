@@ -166,7 +166,7 @@ method split(iter) at(element) using(fst, snd, add) {
 
     object {
         def before is public, readable = fst
-        def after  is public, readable= snd
+        def after  is public, readable = snd
     }
 }
 
@@ -212,6 +212,17 @@ method sublistOf(list : List) from(from : Number)
     sublist
 }
 
+// General contains method for any iterable collection.
+method has(element) in(collection) -> Boolean is public {
+    for(collection) do { value ->
+        if(value == element) then {
+            return true
+        }
+    }
+
+    false
+}
+
 // Determines if one list is a sublist of the other.
 method isSublist(sublist) of(list) -> Boolean is public {
     def size = sublist.size
@@ -235,4 +246,31 @@ method isSublist(sublist) of(list) -> Boolean is public {
     }
 
     return false
+}
+
+// Tests if the given block is true for at least one element of the list.
+method for(list) some(test : Block) -> Boolean is public {
+    for(list) do { value ->
+        if(test.apply(value)) then {
+            return true
+        }
+    }
+
+    false
+}
+
+// Tests if the given block is true for all of the elements of the list.
+method for(list) all(test : Block) -> Boolean is public {
+    for(list) do { value ->
+        if(test.apply(value).not) then {
+            return false
+        }
+    }
+
+    true
+}
+
+// Tests if the given block is true for none of the elements of the list.
+method for(list) none(test : Block) -> Boolean is public {
+    for(list) some(test).not
 }

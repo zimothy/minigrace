@@ -1,6 +1,6 @@
 (function(global) {
 
-    var done, prelude, $true, $false;
+    var done, prelude;
 
     // Grace done constructor.
     function Done() {}
@@ -12,6 +12,13 @@
     // Grace object constructor.
     function Object() {}
     Object.prototype = extend(Done, {
+
+        // Temporary: this should be moved into the prelude.
+        print: function(value) {
+            console.log(value);
+            return done;
+        },
+
         '==': function(other) {
             return bool(this === other);
         },
@@ -72,9 +79,8 @@
             return asBoolean(this['=='](other)) ? match(other) : fail(other);
         }
     });
-
-    $true  = new Boolean(true);
-    $false = new Boolean(false;)
+    Boolean['true']  = new Boolean(true);
+    Boolean['false'] = new Boolean(false);
 
     // Grace number constructor.
     function Number(value) {
@@ -181,7 +187,7 @@
     String.prototype = extend(String, {
         '==': function(other) {
             if (this === other) {
-                return $true;
+                return Boolean['true'];
             }
 
             return this._value === asString(other);
@@ -270,23 +276,40 @@
     });
     String.prototype['[]'] = String.prototype.at;
 
-    prelude =
-        { Done:    Done
-        , done:    done
-        , Object:  Object
-        , Boolean: Boolean
-        , Number:  Number
-        , String:  String
-        , 'true':  $true
-        , 'false': $false
-        };
+    prelude = {
+        Done:    Done,
+        done:    done,
+        Object:  type(Object),
+        Boolean: type(Boolean),
+        Number:  type(Number),
+        String:  type(String)
+    };
 
     // Export grace object.
-    global.grace =
-        { prelude: function() {
+    global.grace = {
+        'native': {
+            object:  construct(Object),
+            'true':  Boolean['true'],
+            'false': Boolean['false'],
+            number:  construct(Number),
+            string:  construct(String)
+        }, prelude: function() {
             return prelude;
-        };
+        }
+    };
 
+
+    // Wraps the given constructor to avoid using the `new` keyword.
+    function construct(Constructor) {
+        return function(arg) {
+            return new Constructor(arg);
+        }
+    }
+
+    // Constructs a Grace Type object from the given constructor's prototype.
+    function type(Constructor) {
+        return new Type(Constructor.prototype);
+    }
 
     // Creates and extends a new prototype object.
     function extend(Prototype, from) {
