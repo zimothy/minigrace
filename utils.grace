@@ -199,7 +199,17 @@ method split(iter) with(test : Block) using(fst, snd, add) {
     }
 }
 
-// Returns a sublist of the given list from and to the given indices inclusive.
+// Returns a sublist from the given index to the end inclusive.
+method sublistOf(list : List) from(from : Number) -> List is public {
+    sublistOf(list) from(from) to(list.size)
+}
+
+// Returns a sublist from the start to the given index inclusive.
+method sublistOf(list : List) to(to : Number) -> List is public {
+    sublistOf(list) from(1) to(to)
+}
+
+// Returns a sublist from and to the given indices inclusive.
 method sublistOf(list : List) from(from : Number)
        to(to : Number) -> List is public {
     def sublist = []

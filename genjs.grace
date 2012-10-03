@@ -1,5 +1,6 @@
 import ast
 import sys
+import unicode
 import util
 import utils
 
@@ -35,7 +36,9 @@ class javascriptCompiler.new(outFile) {
 
         // Modules get placed into a global object called grace. This code will
         // create the object if it does not exist, then add the module to it.
-        wrapLine("grace.{name} = (function($) \{", {
+        wrapLine("(function() \{", {
+
+            line("var $, self")
 
             wrapln("function Module() \{", {
 
@@ -46,7 +49,7 @@ class javascriptCompiler.new(outFile) {
                 }
 
                 line("var outer = prelude")
-                line("$ = $['native']")
+                line("$ = $[\"native\"]")
 
                 // The module is compiled as a standard object.
                 statement("return ", {
@@ -59,13 +62,20 @@ class javascriptCompiler.new(outFile) {
 
             // Modules are singletons. This method of importing ensures that
             // only one instance of the module is ever created.
-            line("var self")
-            wrapLine("return function() \{", {
+            wrapln("function instance() \{", {
                 line("return self ? self : self = new Module()")
             }, "\}")
 
-        // To avoid conflicts, the grace object gets passed directly.
-        }, "\})(grace)")
+            // Compatible with both the browser and Node.js
+            wrapln("if (typeof module === 'undefined') \{", {
+                line("$ = this.grace")
+                line("${safeAccess(name)} = instance")
+            }, "\} else \{", {
+                line("$ = require('./js/gracelib')")
+                line("module.exports = instance")
+            }, "\}")
+
+        }, "\})()")
 
     }
 
@@ -122,29 +132,50 @@ class javascriptCompiler.new(outFile) {
     // context object. This is safe because of the strictness of where methods
     // can be defined (that is, not directly in a block or other method).
     method compileMethod(node) {
-        write(indent)
-        write("function ")
-        compileExpression(node.value)
-        write("(")
-        doAll(utils.map(node.signature) with { part ->
-            {
-                doAll(utils.map(part.params) with { param ->
-                    { compileExpression(param) }
-                }) separatedBy(", ")
-            }
-        }) separatedBy {
-            increaseIndent
-            write(") \{\n{indent}return function(")
+        def name = node.value.value
+        def sig  = node.signature
+
+        def access = utils.filter(node.annotations) with { annotation ->
+            def value = annotation.value
+            (value == "public") || (value == "confidential") ||
+                (value == "private")
         }
+        
+        if(access.size > 1) then {
+            util.linenumv := node.line
+            util.lineposv := access.at(2).linePos
+            util.syntax_error("Bad number of access annotations on {name}")
+        }
+
+        write(indent)
+        write("self{safeAccess(name)} = $.method(function(")
+
+        doAll(utils.map(utils.fold(sig, []) with { params, part ->
+            if(part.vararg != false) then {
+                utils.concat(params, part.params, [part.vararg])
+            } else {
+                utils.concat(params, part.params)
+            }
+        }) with { param -> {
+            compileExpression(param)
+        }}) separatedBy(", ")
 
         wrap(") \{", {
             compileBodyWithReturn(node.body)
-        }, "\}\n")
+        }, "\}, \"{access.first.value}\"")
 
-        for(1..(node.signature.size - 1)) do {
-            decreaseIndent
-            write("{indent}\}\n")
+        for(sig) do { part ->
+            write(", ")
+
+            def size = part.params.size
+            if(part.vararg != false) then {
+                write("$.varargs({size + 1})")
+            } else {
+                write(size.asString)
+            }
         }
+
+        write(");\n")
     }
 
     // Compiles a Grace def node into a const declaration.
@@ -197,17 +228,14 @@ class javascriptCompiler.new(outFile) {
     }
 
     method compileSelfAttach(name : String, body) {
-        wrapln("self" ++ if(utils.has("'") in(name)) then {
-            "[\"{name}\"]"
-        } else {
-            ".{name}"
-        } ++ " = function() \{", body, "\}")
+        wrapln("self{safeAccess(name)} = function() \{", body, "\}")
     }
 
-    // Compiles a Grace return node into a return declaration.
+    // Compiles a Grace return node into a jumping return call.
     method compileReturn(node) {
-        write("throw ")
+        write("this(")
         compileExpression(node.value)
+        write(")")
     }
 
     // Compiles an if statement.
@@ -277,15 +305,20 @@ class javascriptCompiler.new(outFile) {
     }
 
     method compileIdentifier(node) {
-        write(escapeIdentifier(node.value))
+        match(node.value)
+          case { name : ("true" | "false") ->
+            write("$[\"{name}\"]")
+        } case { name ->
+            write(escapeIdentifier(name))
+        }
     }
 
     method compileNumber(node) {
-        write(node.value)
+        write("$.number({node.value})")
     }
 
     method compileString(node) {
-        write("\"{node.value}\"")
+        write("$.string(\"{node.value}\")")
     }
 
     method compileClass(node) {
@@ -361,14 +394,9 @@ class javascriptCompiler.new(outFile) {
     method compileCall(node) {
         // TODO Escape the name.
         def name = node.value.value
-        def direct = (node.value.kind != "member") | (name == "print")
 
-        if(direct) then {
-            write("{name}(")
-        } else {
-            compileExpression(node.value.in)
-            write(".{escapeIdentifier(name)}(")
-        }
+        compileExpression(node.value.in)
+        write(safeAccess(name) ++ "(")
 
         doAll(utils.map(node.with) with { part ->
             {
@@ -426,8 +454,8 @@ class javascriptCompiler.new(outFile) {
     method compileEagerBlock(body : List) {
         if(body.size == 0) then {
             write(unitValue)
-        } elseif(body.size == 1) then {
-            compileExpression(body.at(1))
+        } elseif((body.size == 1) && (body.first.kind != "return")) then {
+            compileExpression(body.first)
         } else {
             wrap("(function() \{", {
                 compileExecution(body)
@@ -474,7 +502,12 @@ class javascriptCompiler.new(outFile) {
     }
 
     // Wraps the body produced by the block in the outer strings.
-    method wrap(fst, body, snd) {
+    method wrap(fst, body, *rest) {
+        wrap'(fst, body, rest)
+    }
+
+    // The wrap method without varargs.
+    method wrap'(fst, body, rest : List) {
         writeOrApply(fst)
         write("\n")
 
@@ -483,13 +516,18 @@ class javascriptCompiler.new(outFile) {
         decreaseIndent
 
         write(indent)
-        writeOrApply(snd)
+
+        if(rest.size > 1) then {
+            wrap'(rest.at(1), rest.at(2), utils.sublistOf(rest) from(3))
+        } elseif(rest.size == 1) then {
+            writeOrApply(rest.first)
+        }
     }
 
     // As for wrap, but adds an indent before and a linebreak afterwards.
-    method wrapln(fst, body, snd) {
+    method wrapln(fst, body, *rest) {
         write(indent)
-        wrap(fst, body, snd)
+        wrap'(fst, body, rest)
         write("\n")
     }
 
@@ -540,7 +578,7 @@ class javascriptCompiler.new(outFile) {
 
 }
 
-def keywords = [ "with", "break" ]
+def keywords = [ "with", "break", "new", "public", "private" ]
 
 method escapeIdentifier(identifier : String) -> String {
     if(keywords.contains(identifier)) then {
@@ -548,6 +586,18 @@ method escapeIdentifier(identifier : String) -> String {
     }
 
     identifier.replace("'") with("$").replace("()") with("_")
+}
+
+method safeAccess(name : String) -> String {
+    if(keywords.contains(name) || {
+        utils.for(name) all { char ->
+            unicode.isLetter(char) || unicode.isNumber(char)
+        }.not
+    }) then {
+        "[\"{name}\"]"
+    } else {
+        ".{name}"
+    }
 }
 
 // Escapes a Grace identifier if it contains invalid JSON field name characters.
