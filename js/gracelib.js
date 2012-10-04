@@ -261,7 +261,7 @@
             return number(-this._value);
         }, "native", 0),
         asString: method(function() {
-            return string(this._value);
+            return string(this._value.toString());
         }, "native", 0),
         hashcode: method(function() {
             return number(this._value * 10);
@@ -638,15 +638,18 @@
 
     var grace = {
         'native': {
-            object:  object,
-            'true':  Boolean['true'],
-            'false': Boolean['false'],
-            number:  number,
-            string:  string,
-            block:   block,
-            list:    list,
-            varargs: varargs,
-            method:  method
+            object:    object,
+            'true':    Boolean['true'],
+            'false':   Boolean['false'],
+            number:    number,
+            string:    string,
+            block:     block,
+            list:      list,
+            varargs:   varargs,
+            method:    method,
+            asBoolean: asBoolean,
+            asNumber:  asNumber,
+            asString:  asString
         }, prelude: function() {
             return prelude;
         }

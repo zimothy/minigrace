@@ -241,9 +241,9 @@ class javascriptCompiler.new(outFile) {
     // Compiles an if statement.
     method compileIf(node) {
         wrapln({
-            write("if (")
+            write("if ($.asBoolean(")
             compileExpression(node.value)
-            write(") \{")
+            write(")) \{")
         }, {
             compileExecution(node.thenblock)
         }, {
@@ -411,9 +411,9 @@ class javascriptCompiler.new(outFile) {
 
     // Compiles a Grace if statement into a ternary.
     method compileTernary(node) {
-        write("(")
+        write("($.asBoolean(")
         compileExpression(node.value)
-        write(" ? ")
+        write(") ? ")
         compileEagerBlock(node.thenblock)
         write(" : ")
 
@@ -458,7 +458,7 @@ class javascriptCompiler.new(outFile) {
             compileExpression(body.first)
         } else {
             wrap("(function() \{", {
-                compileExecution(body)
+                compileBodyWithReturn(body)
             }, "\})()")
         }
     }
