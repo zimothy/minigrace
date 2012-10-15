@@ -5,27 +5,34 @@
     var global = this;
     var slice  = Array.prototype.slice;
 
-    // Wraps the given constructor to avoid using the `new` keyword.
-    function construct(Constructor) {
-        return function(arg) {
-            return new Constructor(arg);
-        }
+    // Wraps the given value in a getter method.
+    function getter(value) {
+        return nativeMethod(function() {
+            return value;
+        });
+    }
+
+    // Wraps the constructor into a Grace class, using new as the class method.
+    function makeClass(Constructor, types) {
+        return {
+            'new': method(construct(Constructor), "public", types);
+        };
     }
 
     // Constructs a Grace Type object from the given constructor's prototype.
     function makeType(Constructor) {
-        return new Type(Constructor.prototype);
+        return getter(new Type(Constructor.prototype));
     }
 
-    // Creates and extends a new prototype object.
-    function extend(Prototype, from) {
-        var name, object;
+    var hasOwnProperty = Object.prototype.hasOwnProperty;
 
-        object = new Prototype();
-        for (name in from) {
-            object[name] = from[name];
+    // Adds all the direct properties in from to object.
+    function extend(object, from) {
+        for (var key in from) {
+            if (hasOwnProperty.call(from, key)) {
+                object[key] = from;
+            }
         }
-
         return object;
     }
 
@@ -48,459 +55,456 @@
 
     // Conversion helpers.
     function asBoolean(value) {
-        if (value instanceof Boolean) {
-            return value._value;
+        if (typeof value === "boolean") {
+            return value;
         }
 
         var result = false;
-        value.andAlso(block(function() {
+        value.andAlso(function() {
             result = true;
-        }));
+        });
 
         return result;
     }
 
     function asNumber(value) {
-        if (value instanceof Number) {
-            return value._value;
+        if (typeof value === "number") {
+            return value;
         }
 
-        return parseInt(asString(value), 10);
+        throw new Exception("NativeTypeException",
+            "Cannot retrieve native number");
     }
 
     function asString(value) {
-        return value.asString()._value;
+        if (typeof value === "string") {
+            return value;
+        }
+
+        var string = has(value, "asString") ? call(value, "asString") :
+            call(value, "asDebugString");
+
+        if (typeof value === "string") {
+            return value;
+        }
+
+        throw new Exception("NativeTypeException",
+            "Cannot retrieve native string");
+    }
+
+    function asArray(value) {
+        if (value instanceof Array) {
+            return value;
+        }
+
+        if (!(has(value, "size") && has(value, "at"))) {
+            throw new Exception("NativeTypeException",
+                "Cannot retrieve native list");
+        }
+
+        var i = 0, length = call(value, "size");
+        var result = [];
+
+        while (i < length) {
+            result.push(callWith(value, "at", value)(i));
+        }
+
+        return result;
+    }
+
+    // Late-bound matchers.
+    function match(result, bindings) {
+        var sm = call(prelude, "SuccessfulMatch");
+        return callWith(sm, "new")(result, bindings);
+    }
+
+    function fail(result) {
+        var fm = call(prelude, "FailedMatch");
+        return callWith(fm, "new")(result);
     }
 
 
     /** Prelude definitions ***************************************************/
 
-    var print = (function() {
-        if (typeof console === "object" && typeof console.log === "function") {
-            return method(function(value) {
-                console.log(asString(value));
-                return done;
-            }, "native", 1);
-        } else {
-            return method(function() {
-                return done;
-            }, "native", 1);
-        }
-    })();
+    var print = nativeMethod(typeof console === "object" &&
+        typeof console.log === "function" ? function(value) {
+            console.log(asString(value));
+        } : function() {}, [doneType]);
 
-    var for_do = method(function(iterable, block) {
+    var if_then = nativeMethod(function(condition, thenBlock) {
+        if (asBoolean(condition)) {
+            return thenBlock.apply();
+        }
+    }, [booleanType], [blockType]);
+
+    var if_then_else = nativeMethod(function(condition, thenBlock, elseBlock) {
+        if (asBoolean(condition)) {
+            return thenBlock.apply();
+        }
+
+        return elseBlock.apply();
+    }, [booleanType], [blockType]);
+
+    var for_do = nativeMethod(function(iterable, block) {
         var iterator = iterable.iter();
         while (asBoolean(iterator.havemore())) {
             block.apply(iterator.next());
         }
-        return done;
-    }, "native", 1, 1);
+    }, [iterableType], [blockType]);
 
-    var while_do = method(function(condition, block) {
+    var while_do = nativeMethod(function(condition, block) {
         while (asBoolean(condition.apply())) {
             block.apply();
         }
-        return done;
-    }, "native", 1, 1);
+    }, [blockType], [blockType]);
+
+
+    /** Native types **********************************************************/
+
+    var doneType = new Type({
+        asDebugString: [stringType]
+    });
+
+    var objectType = new Type({
+        asDebugString: [stringType],
+        '==':     [[objectType], booleanType],
+        '!=':     [[objectType], booleanType],
+        asString: [stringType]
+    });
 
 
     /** Native objects ********************************************************/
 
     // Singleton and constructor wrapper definitions.
-    var done   = new Done();
-    var object = construct(Object);
-
-    function bool(value) {
-        return value ? Boolean['true'] : Boolean['false'];
-    }
-
-    var number = construct(Number);
-    var string = construct(String);
-    var block  = construct(Block);
-
-    function list(values) {
-        return new List(values instanceof Array ? values :
-            slice.call(arguments, 0));
-    }
-
+    var done;
     var varargs = construct(VarArgs);
 
 
-    // Grace done constructor.
-    function Done() {}
-
-    Done.prototype = null;
-
     // Grace object constructor.
-    function Object() {}
-
-    Object.prototype = extend(Done, {
-
-        // Temporary: this should be moved into the prelude.
-        print: print,
-
-        '==': method(function(other) {
-            return bool(this === other);
-        }, "native", 1),
-        '!=': method(function(other) {
-            return this['=='].not();
-        }, "native", 1),
-        asString: method(function() {
-            return this.asDebugString();
-        }, "native", 1),
-        asDebugString: method(function() {
-            return "object {}";
-        }, "native", 1)
-    });
-
-
-    // Grace boolean constructor.
-    function Boolean(value) {
-        this._value = value;
+    function Object() {
+        var self = this;
+        extend(this, {
+            // Temporary: this should be moved into the prelude.
+            print: print,
+            '==': nativeMethod(function(other) {
+                return bool(self === other);
+            }, [objectType]),
+            '!=': nativeMethod(function(other) {
+                return self['=='].not();
+            }, [objectType]),
+            asString: nativeMethod(function() {
+                return self.asDebugString();
+            }),
+            asDebugString: nativeMethod(function() {
+                // TODO Actually describe the object.
+                return "object {}";
+            })
+        });
     }
 
-    Boolean.prototype = extend(Object, {
-        '==': method(function(other) {
-            return this._value === asBoolean(other);
-        }, "native", 1),
-        not: method(function() {
-            return bool(!this._value);
-        }, "native", 0),
-        'prefix!': method(function() {
-            return bool(!this._value);
-        }, "native", 0),
-        '&': method(function(other) {
-            return new GraceAndPattern(this, other);
-        }, "native", 1),
-        '|': method(function(other) {
-            return new GraceOrPattern(this, other);
-        }, "native", 1),
-        '&&': method(function(other) {
-            return !this._value ? this : other.apply ? other.apply() : other;
-        }, "native", 1),
-        '||': method(function(other) {
-            return this._value ? this : other.apply ? other.apply() : other;
-        }, "native", 1),
-        andAlso: method(function(other) {
-            return this._value ? other.apply() : this;
-        }, "native", 1),
-        orElse: method(function(other) {
-            return this._value ? this : other.apply();
-        }, "native", 1),
-        asString: method(function() {
-            return string(this._value);
-        }, "native", 0),
-        'match()matchesBinding()else': method(function(pat, b, e) {
-            return pat['matchObject()matchesBinding()else'](this)(b)(e);
-        }, "native", 1, 1, 1),
-        match: method(function(other) {
-            return asBoolean(this['=='](other)) ? match(other) : fail(other);
-        }, "native", 1)
-    });
-
-    Boolean['true']  = new Boolean(true);
-    Boolean['false'] = new Boolean(false);
+    Object.prototype = null;
 
 
-    // Grace number constructor.
-    function Number(value) {
-        this._value = value;
-    }
-
-    Number.prototype = extend(Object, {
-        '==': method(function(other) {
-            return this._value === asNumber(other);
-        }, "native", 1),
-        '+': method(function(other) {
-            return number(this._value + asNumber(other));
-        }, "native", 1),
-        '-': method(function(other) {
-            return number(this._value - asNumber(other));
-        }, "native", 1),
-        '*': method(function(other) {
-            return number(this._value * asNumber(other));
-        }, "native", 1),
-        '/': method(function(other) {
-            return number(this._value / asNumber(other));
-        }, "native", 1),
-        '%': method(function(other) {
-            return number(this._value % asNumber(other));
-        }, "native", 1),
-        '++': method(function(other) {
-            return string(this._value + asString(other));
-        }, "native", 1),
-        "..": method(function(other) {
-            var from = this._value;
-            var to   = asNumber(other);
-            if (to < from) {
-                from = to;
-                to = this._value;
-            }
-            
-            var range = [];
-
-            for (; from <= to; from++) {
-                range.push(number(from));
-            }
-
-            return list(range);
-        }, "native", 1),
-        '<': method(function(other) {
-            return number(this._value < asNumber(other));
-        }, "native", 1),
-        '>': method(function(other) {
-            return number(this._value < asNumber(other));
-        }, "native", 1),
-        '<=': method(function(other) {
-            return number(this._value <= asNumber(other));
-        }, "native", 1),
-        '>=': method(function(other) {
-            return number(this._value >= asNumber(other));
-        }, "native", 1),
-        'prefix-': method(function() {
-            return number(-this._value);
-        }, "native", 0),
-        asString: method(function() {
-            return string(this._value.toString());
-        }, "native", 0),
-        hashcode: method(function() {
-            return number(this._value * 10);
-        }, "native", 0),
-        'match()matchesBinding()else': method(function(pat, b, e) {
-            return pat['matchObject()matchesBinding()else'](this)(b)(e);
-        }, "native", 1, 1, 1),
-        'matchObject()matchesBinding()else': method(function(obj, b, e) {
-            (asBoolean(this['=='](obj)) ? b : e).apply(obj);
-        }, "native", 1, 1, 1),
-        inBase: method(function(other) {
-            return string(this._value.toString(asNumber(other)))
-        }, "native", 1),
-        truncate: method(function() {
-            return number((this._value < 0 ?
-                Math.ceil : Math.floor)(this._value));
-        }, "native", 0),
-        match: method(function(other) {
-            return asBoolean(this['=='](other)) ? match(other) : fail(other);
-        }, "native", 1),
-        '|': method(function(other) {
-            return new GraceOrPattern(this, other);
-        }, "native", 1),
-        '&': method(function(other) {
-            return new GraceAndPattern(this, other);
-        }, "native", 1)
-    });
-
-
-    // Grace string constructor.
-    function String(value) {
-        this._value = value;
-    }
-
-    String.prototype = extend(String, {
-        '==': method(function(other) {
-            if (this === other) {
-                return Boolean['true'];
-            }
-
-            return this._value === asString(other);
-        }, "native", 1),
-        '++': method(function(other) {
-            return string(this._value + asString(other));
-        }, "native", 1),
-        at: method(function(index) {
-            return string(this._value.charAt(asNumber(index)));
-        }, "native", 1),
-        size: method(function() {
-            return number(this._value.length);
-        }, "native", 0),
-        'replace()with': method(function(what, wth) {
-            what = new RegExp(what.replace(/(.)/g, '\\$1'), 'g');
-            return string(this._value.replace(what, wth));
-        }, "native", 1, 1),
-        'substringFrom()to': method(function(from, to) {
-            from = asNumber(from);
-            to = asNumber(to);
-            return string(this._value.substring(from, to));
-        }, "native", 1, 1),
-        asString: method(function() {
-            return this;
-        }, "native", 0),
-        iter: method(function() {
-            var i     = 0;
-            var value = this._value;
-
-            return {
-                havemore: method(function() {
-                    return bool(i < value.length);
-                }, "native", 0),
-                next: method(function() {
-                    return string(value.charAt(i++));
-                }, "native", 0)
-            };
-        }, "native", 0),
-        ord: method(function() {
-            return number(this._value.charCodeAt(0));
-        }, "native", 0),
-        hashcode: method(function() {
-            var hashCode = 0;
-            each(this._value, function(i) {
-                hashCode *= 23;
-                hashCode += this._value.charCodeAt(i);
-                hashCode %= 0x100000000;
-            });
-
-            return number(hashCode);
-        }, "native", 0),
-        'match()matchesBinding()else': method(function(pat, b, e) {
-            return pat['matchObject()matchesBinding()else'](this)(b)(e);
-        }, "native", 1, 1, 1),
-        'matchObject()matchesBinding()else': method(function(obj, b, e) {
-            return (asBoolean(this['=='](obj)) ? b : e).apply(obj);
-        }, "native", 1, 1, 1),
-        indices: method(function() {
-            var indices = [];
-            each(this._value, function(i) {
-                indices.push(number(i + 1));
-            });
-
-            return list(indices);
-        }, "native", 0),
-        asNumber: method(function() {
-            return number(Number(this._value));
-        }, "native", 0),
-        match: method(function(other) {
-            return asBoolean(this['=='](other)) ? match(other) : fail(other);
-        }, "native", 1),
-        '|': method(function(other) {
-            return new GraceOrPattern(this, other);
-        }, "native", 1),
-        '&': method(function(other) {
-            return new GraceAndPattern(this, other);
-        }, "native", 1)
-    });
-
-    String.prototype['[]'] = String.prototype.at;
-
-
-    // Grace block constructor.
-    function Block(value) {
-        this._value = value;
-    }
-
-    Block.prototype = extend(Object, {
-        apply: method(function(args) {
-            if (asNumber(args.size()) < this._value.length) {
-                throw "Incorrect number of arguments."
-            }
-
-            return this._value.apply(null, args._value);
-        }, "native", varargs(1)),
-        match: method(match, "native", 1)
-    });
-
-
-    // Grace list constructor.
-    function List(values) {
-        this._value = values;
-    }
-
-    List.prototype = extend(Object, {
-        '==': method(function(other) {
-            var i, iter, length, list;
-
-            list   = this._value;
-            length = list.length;
-
-            if (!has(other, 'size') || !has(other, 'at') ||
-                    asNumber(other.size()) !== length) {
-                return Boolean['false'];
-            }
-
-            if (each(list, function(i, value) {
-                if (asBoolean(value['!='](other.at(i)))) {
-                    return true;
+    // Grace primitive methods.
+    var primitives = {
+        'boolean': extend(new Object(), {
+            '==': nativeMethod(function(self, other) {
+                return self === asBoolean(other);
+            }, [objectType]),
+            not: nativeMethod(function(self) {
+                return !self;
+            }),
+            'prefix!': nativeMethod(function(self) {
+                return !self;
+            }),
+            '&': nativeMethod(function(self, other) {
+                return new GraceAndPattern(self, other);
+            }, [patternType]),
+            '|': nativeMethod(function(self, other) {
+                return new GraceOrPattern(self, other);
+            }, [patternType]),
+            '&&': nativeMethod(function(self, other) {
+                return self ? (has(other, "apply") ?
+                    call(other, "apply", self) : other) : self;
+            }, [booleanType['|'](blockType)]),
+            '||': nativeMethod(function(self, other) {
+                return self ? self : (has(other, "apply") ?
+                    call(other, "apply", self) : other);
+            }, [booleanType['|'](blockType)]),
+            andAlso: nativeMethod(function(self, other) {
+                return self ? other.apply() : self;
+            }, [blockType]),
+            orElse: nativeMethod(function(self, other) {
+                return self ? self : other.apply();
+            }, [blockType]),
+            asString: nativeMethod(function(self) {
+                return self.toString();
+            }),
+            match: nativeMethod(function(self, other) {
+                var eq = callWith(self, "==", self)(other);
+                return eq ? match(other) : fail(other);
+            }, [objectType])
+        }),
+        number: extend(new Object(), {
+            '==': nativeMethod(function(self, other) {
+                return self === asNumber(other);
+            }, [objectType]),
+            '+': nativeMethod(function(self, other) {
+                return self + asNumber(other);
+            }, [numberType]),
+            '-': nativeMethod(function(self, other) {
+                return self - asNumber(other);
+            }, [numberType]),
+            '*': nativeMethod(function(self, other) {
+                return self * asNumber(other);
+            }, [numberType]),
+            '/': nativeMethod(function(self, other) {
+                return self / asNumber(other);
+            }, [numberType]),
+            '%': nativeMethod(function(self, other) {
+                return self % asNumber(other);
+            }, [numberType]),
+            '++': nativeMethod(function(self, other) {
+                return self.toString() + asString(other);
+            }, [objectType]),
+            "..": nativeMethod(function(self, other) {
+                var from = self;
+                var to   = asNumber(other);
+                if (to < from) {
+                    from = to;
+                    to = self;
                 }
-            })) {
-                return Boolean['false'];
-            }
-
-            return Boolean['true'];
-        }, "native", 1),
-        size: method(function() {
-            return number(this._value.length);
-        }, "native", 0),
-        at: method(function(index) {
-            return this._value[index - 1];
-        }, "native", 1),
-        'at()put': method(function(index, value) {
-            this._value[index - 1] = value;
-            return done;
-        }, "native", 1, 1),
-        contains: method(function(value1) {
-            if (each(this._value, function(i, value2) {
-                if (asBoolean(value2['=='](value1))) {
-                    return true;
+                
+                var range = [];
+                for (; from <= to; from++) {
+                    range.push(number(from));
                 }
-            })) {
-                return Boolean['true'];
+                return range;
+            }, [numberType]),
+            '<': nativeMethod(function(self, other) {
+                return self < asNumber(other);
+            }, [numberType]),
+            '>': nativeMethod(function(self, other) {
+                return self < asNumber(other);
+            }, [numberType]),
+            '<=': nativeMethod(function(self, other) {
+                return self <= asNumber(other);
+            }, [numberType]),
+            '>=': nativeMethod(function(self, other) {
+                return self >= asNumber(other);
+            }, [numberType]),
+            'prefix-': nativeMethod(function(self) {
+                return -self;
+            }),
+            asString: nativeMethod(function(self) {
+                return self.toString();
+            }),
+            hashcode: nativeMethod(function(self) {
+                return self * 10;
+            }),
+            inBase: nativeMethod(function(self, base) {
+                return self.toString(asNumber(other));
+            }, [numberType]),
+            truncate: nativeMethod(function(self) {
+                return (self < 0 ? Math.ceil : Math.floor)(self);
+            }),
+            match: nativeMethod(function(self, other) {
+                if (!asBoolean(numberType.match(other))) {
+                    return fail(other);
+                }
+                return this == asNumber(other) ? match(other) : fail(other);
+            }, [objectType]),
+            '|': nativeMethod(function(self, other) {
+                var or = call(prelude, "GraceOrPattern", self);
+                return callWith(or, "new", self)(self, other);
+            }, [patternType]),
+            '&': nativeMethod(function(self, other) {
+                var and = call(prelude, "GraceOrPattern", self);
+                return callWith(and, "new", self)(self, other);
+            }, [patternType])
+        }),
+        string: extend(new Object, {
+            '==': nativeMethod(function(self, other) {
+                return self === asString(other);
+            }, [objectType]),
+            '++': nativeMethod(function(self, other) {
+                return self + asString(other);
+            }, [objectType]),
+            at: nativeMethod(function(self, index) {
+                return self.charAt(asNumber(index));
+            }, [numberType]),
+            size: nativeMethod(function(self) {
+                return self.length;
+            }),
+            'replace()with': nativeMethod(function(self, what, wth) {
+                what = new RegExp(asString(what).replace(/(.)/g, '\\$1'), 'g');
+                return self.replace(what, asString(wth)));
+            }, [stringType], [stringType]),
+            'substringFrom()to': nativeMethod(function(self, from, to) {
+                return self.substring(asNumber(from), asNumber(to));
+            }, [numberType], [numberType]),
+            asString: nativeMethod(function(self) {
+                return self;
+            }),
+            iter: nativeMethod(function(self) {
+                var i = 0;
+                return extend(new Object(), {
+                    havemore: nativeMethod(function() {
+                        return i < self.length;
+                    }),
+                    next: nativeMethod(function() {
+                        return value.charAt(i++);
+                    })
+                });
+            }),
+            ord: nativeMethod(function(self) {
+                return self.charCodeAt(0);
+            }),
+            hashcode: nativeMethod(function(self) {
+                var hashCode = 0;
+                each(self, function(i) {
+                    hashCode *= 23;
+                    hashCode += self.charCodeAt(i);
+                    hashCode %= 0x100000000;
+                });
+                return hashCode;
+            }),
+            indices: nativeMethod(function(self) {
+                var indices = [];
+                each(self, function(i) {
+                    indices.push(number(i + 1));
+                });
+                return indices;
+            }),
+            asNumber: nativeMethod(function(self) {
+                // What happens if it doesn't match?
+                return number(Number(self));
+            }),
+            match: nativeMethod(function(self, other) {
+                if (!asBoolean(stringType.match(other))) {
+                    return fail(other);
+                }
+                return self == asString(other) ? match(other) : fail(other);
+            }, [objectType]),
+            '|': nativeMethod(function(self, other) {
+                var or = call(prelude, "GraceOrPattern", self);
+                return callWith(or, "new", self)(self, other);
+            }, [patternType]),
+            '&': nativeMethod(function(self, other) {
+                var and = call(prelude, "GraceOrPattern", self);
+                return callWith(and, "new", self)(self, other);
+            }, [patternType])
+        }),
+        'function': extend(new Object(), {
+            apply: nativeMethod(function(self, args) {
+                if (asNumber(args.length) < self.length) {
+                    throw "Incorrect number of arguments."
+                }
+                return self.apply(null, args);
+            }, varargs(objectType)),
+            match: nativeMethod(function(value) {
+                return failedMatch(value);
+            }, [objectType]),
+            pattern: nativeMethod(function() {})
+        },
+        // The only primitive object in this system is the array.
+        object: extend(new Object(), {
+            '==': nativeMethod(function(self, other) {
+                other = asList(other);
+
+                if (self.length !== other.length) {
+                    return false;
+                }
+
+                !each(self, function(i) {
+                    if (asBoolean(callWith(self[i], "==", self)(other[i]))) {
+                        return true;
+                    }
+                });
+            }, [objectType]),
+            concat: nativeMethod(function(self, other) {
+                return self.concat(asArray(other));
+            }, [listType]),
+            size: nativeMethod(function(self) {
+                return self.length;
+            }),
+            at: nativeMethod(function(self, index) {
+                return self[asNumber(index) - 1];
+            }, [numberType]),
+            'at()put': nativeMethod(function(self, index, value) {
+                self[asNumber(index) - 1] = value;
+            }, [numberType], [objectType]),
+            contains: nativeMethod(function(self, value) {
+                each(self, function(i, el) {
+                    if (asBoolean(callWith(el, "==", self)(value))) {
+                        return true;
+                    }
+                }) || false;
+            }, [objectType]),
+            iter: nativeMethod(function(self) {
+                var i = 0;
+                return {
+                    havemore: nativeMethod(function() {
+                        return i < self.length;
+                    }),
+                    next: nativeMethod(function() {
+                        return value[i++];
+                    })
+                };
+            }),
+            push: nativeMethod(function(self, value) {
+                self.push(value);
+            }, [objectType]),
+            pop: nativeMethod(function(self) {
+                return self.pop();
+            }),
+            first: nativeMethod(function(self) {
+                return self[0];
+            }),
+            last: nativeMethod(function(self) {
+                return self[self.length - 1];
+            }),
+            prepended: nativeMethod(function(self) {
+                return [value].concat(self);
+            }),
+            indices: nativeMethod(function(self) {
+                var indices = [];
+                each(self, function(i) {
+                    indices.push(i);
+                });
+                return indices;
+            }),
+            asString: nativeMethod(function(self) {
+                var str = "[";
+                each(self, function(i, value) {
+                    str += asString(value) + ",";
+                });
+                return str.substring(0, str.length - 1) + "]";
+            })
+        })
+    };
+
+    primitives.string['[]'] = primitives.string.at;
+    primitives.object['[]'] = primitives.object.at;
+
+
+    // Grace type.
+    function Type(type) {
+        this.type = type;
+    }
+
+    Type.prototype = inherits(Pattern, {
+        match: method(function(obj) {
+            var type = this.type;
+            for (var key in type) {
+                if (!has(obj, key) || obj[key].length !== type[key].length) {
+                    return failedMatch(obj);
+                }
             }
 
-            return Boolean['false'];
-        }, "native", 1),
-        iter: method(function() {
-            var i, value;
-
-            i = 0;
-            value = this._value;
-
-            return {
-                havemore: method(function() {
-                    return bool(i < value.length);
-                }, "native", 0),
-                next: method(function() {
-                    return value[i++];
-                }, "native", 0)
-            };
-        }, "native", 0),
-        push: method(function(value) {
-            this._value.push(value);
-            return done;
-        }, "native", 1),
-        pop: method(function() {
-            return this._value.pop();
-        }, "native", 0),
-        first: method(function() {
-            return this._value[0];
-        }, "native", 0),
-        last: method(function() {
-            return this._value[this._value.length - 1];
-        }, "native", 0),
-        prepended: method(function() {
-            return list([value].concat(this._value));
-        }, "native", 0),
-        indices: method(function() {
-            var indices;
-
-            indices = [];
-            each(this._value, function(i) {
-                indices.push(i);
-            });
-
-            return list(indices);
-        }, "native", 0),
-        asString: method(function() {
-            var str = "[";
-            each(this._value, function(i, value) {
-                str += asString(value) + ",";
-            });
-
-            return string(str.substring(0, str.length - 1) + "]");
-        }, "native", 0)
-    });
-
-
-    // TODO
-    function Type() {}
+            return successfulMatch(obj);
+        }, "native", [doneType])
+    })
 
 
     // Var args notifier.
@@ -508,44 +512,108 @@
         this.value = value;
     }
 
-    VarArgs.prototype.valueOf = function() {
-        return this.value;
+
+    function module(name, source, func) {
+        source = source.split("\n");
+
+        try {
+            func(defineMethod, makeGetMethod(src));
+        } catch (ex) {
+            if (!ex.reported) {
+                console.log("Unexpected module failure: " + ex);
+            }
+        }
     }
 
+    // Grace exceptions.
+    function Exception(name, message) {
+        this._name = name;
+        this._message = message;
+        this._stack = [];
+    }
 
-    // Matching constructs.
-    function match() {}
-    function fail() {}
+    Exception.prototype = inherits(Object, {
+        name: nativeMethod(function() {
+            return this._name;
+        }),
+        message: nativeMethod(function() {
+            return this._message;
+        }),
+        asString: nativeMethod(function() {
+            return this._name + ": " + this._message;
+        })
+    });
+
+    function ExceptionFactory(name) {
+        this._name = name;
+    }
+
+    ExceptionFactory.prototype = inherits(Object, {
+        name: nativeMethod(function() {
+            return this._name;
+        }),
+        raise: nativeMethod(function(message) {
+            throw new Exception(this._name, message);
+        }),
+        refine: nativeMethod(function(name) {
+            return new ExceptionFactory(name);
+        }),
+        asString: nativeMethod(function() {
+            return this._name;
+        })
+    });
+
+    function Return() {}
+
+    Return.prototype.toString = function() {
+        return "Return invoked outside of containing method";
+    };
 
 
     // Constructs a method with the given access annotation and function. Also
     // takes information about the signature of the method.
-    function method(func, access) {
-        var params = slice.call(arguments, 2);
+    function defineMethod(object, name, func, annotations) {
+        var params = slice.call(arguments, 4);
+        if (params.length === 0) {
+            params = [[]];
+        }
 
-        function Return(value) {
+        function LocalReturn(value) {
             this.value = value;
         }
-        Return.prototype.toString = returnToString;
+
+        LocalReturn.prototype = new Return();
 
         function localReturn(value) {
-            throw new Return(value);
+            throw new LocalReturn(value);
         }
+
+        var reportError = typeof console !== undefined &&
+            typeof console.error === "function" ? console.error : function() {};
 
         function methodFunc(self, args) {
             if (access === "native") {
                 return func.apply(self, args);
             }
 
-            // try {
+            try {
                 return func.apply(localReturn, args);
-            // } catch (e) {
-            //     if (e instanceof Return) {
-            //         return e.value;
-            //     } else {
-            //         throw e;
-            //     }
-            // }
+            } catch (e) {
+                if (e instanceof LocalReturn) {
+                    return e.value;
+                } else {
+                    if (!(e instanceof Return || e instanceof Exception)) {
+                        reportError("Native error - " + e);
+                        e = new Exception("InternalException", e.toString());
+                    }
+
+                    if (e instanceof Exception) {
+                        e._stack.splice(0, 0, line);
+                    }
+
+                    throw e;
+                }
+            }
         }
 
         function makeSignature(i) {
@@ -553,7 +621,9 @@
                 return null;
             }
 
-            var length  = params[i];
+            var part = params[i];
+            var length = part.length;
+
             var varargs = length instanceof VarArgs;
             if (varargs) {
                 length -= 1;
@@ -610,49 +680,100 @@
         return signature;
     }
 
+    function call() {
+        return callWith.apply(this, arguments)();
+    }
 
-    // Standard toString method for Return objects.
-    function returnToString() {
-        return "Bad return location";
-    };
+    function callWith(object, name, context, line) {
+        var type = typeof object;
+
+        if (type !== "object" || object instanceof Array) {
+            if (type === "undefined") {
+                var ex = new Exception("DoneException",
+                    "Cannot perform action on done");
+                ex._stack.push(line);
+                throw ex;
+            }
+
+            if (!has(primitives[type], name)) {
+                var ex = new Exception("NoSuchMethodException",
+                    "No such method " + name);
+                ex._stack.push(line);
+                throw ex;
+            }
+
+            var method = primitives[type][name];
+
+            return function() {
+                return method.apply(null, [object].concat(arguments));
+            };
+        }
+
+        if (!has(object, name)) {
+            var ex = new Exception("NoSuchMethodException",
+                "No such method " + name);
+            ex._stack.push(line);
+            throw ex;
+        }
+
+        var method = object[name];
+
+        if (method.access === 'confidential' && context !== object) {
+            var ex =  new Exception("MethodAccessException",
+                "Improper access to confidential method");
+            ex._stack.push(line);
+            throw ex;
+        }
+
+        if (method.access === 'native') {
+            return function() {
+                return method.apply(object, arguments);
+            };
+        }
+
+        return method;
+    }
 
 
     /** Native modules in the standard library ********************************/
 
     var prelude = {
-        Done:        Done,
-        done:        done,
-        Object:      makeType(Object),
-        Boolean:     makeType(Boolean),
-        Number:      makeType(Number),
-        String:      makeType(String),
-        print:       print,
-        'for()do':   for_do,
-        'while()do': while_do
+        done:             getter(done),
+        Done:             getter(doneType),
+        Object:           getter(objectType),
+        Boolean:          getter(booleanType),
+        Number:           getter(numberType,
+        String:           getter(stringType),
+        Dynamic:          getter(dynamicType),
+        print:            print,
+        'if()then':       if_then,
+        'if()then()else': if_then_else,
+        'for()do':        for_do,
+        'while()do':      while_do,
+        Exception:        getter(new ExceptionFactory("Exception"))
     };
-
-    // TODO
 
 
     /** Global grace export ***************************************************/
 
     var grace = {
-        'native': {
-            object:    object,
-            'true':    Boolean['true'],
-            'false':   Boolean['false'],
-            number:    number,
-            string:    string,
-            block:     block,
-            list:      list,
-            varargs:   varargs,
-            method:    method,
-            asBoolean: asBoolean,
-            asNumber:  asNumber,
-            asString:  asString
-        }, prelude: function() {
-            return prelude;
-        }
+        'native': extend(function(value) {
+            if (arguments.length > 1) {
+                var type = typeof arguments[3];
+                if (type === "number" || type === "undefined") {
+                    return callWith.apply(this, arguments);
+                } else if (arguments.length > 1) {
+                    return defineMethod.apply(this, arguments);    
+                }
+            } else if (typeof value === "function") {
+                var object = new Object();
+                value(object);
+                return object;
+            } else {
+                return new VarArgs(value);
+            }
+        }),
+        prelude: getter(prelude)
     };
 
     if (typeof module === "undefined") {

@@ -5,7 +5,7 @@ import util
 import utils
 
 // The name for this is prone to change, so it makes sense to centralize it.
-def unitValue = "prelude.done"
+def unitValue = "done"
 
 // Compiles the given nodes into a module with the given name.
 method compile(nodes : List, outFile, moduleName : String, runMode : String,
@@ -40,7 +40,14 @@ class javascriptCompiler.new(outFile) {
 
             line("var $, self")
 
-            wrapln("function Module() \{", {
+            wrapln("function Module(done) \{", {
+
+                wrapLine("var $src = [", {
+                    for(util.cLines) do { srcLine ->
+                        write("{indent}\"{srcLine}\"")
+                    } separatedBy(",\n")
+                    write("\n")
+                }, "]")
 
                 // The imports need to be inside this function to allow the
                 // outer closure to run correctly.
@@ -119,8 +126,6 @@ class javascriptCompiler.new(outFile) {
             compileVar(node)
         } case { "return" ->
             statement("", { compileReturn(node) })
-        } case { "if" ->
-            compileIf(node)
         } case { "bind" ->
             statement("", { compileBind(node) })
         } else {
@@ -148,7 +153,7 @@ class javascriptCompiler.new(outFile) {
         }
 
         write(indent)
-        write("self{safeAccess(name)} = $.method(function(")
+        write("$(self, \"{name}\", function(")
 
         doAll(utils.map(utils.fold(sig, []) with { params, part ->
             if(part.vararg != false) then {
@@ -161,8 +166,14 @@ class javascriptCompiler.new(outFile) {
         }}) separatedBy(", ")
 
         wrap(") \{", {
-            compileBodyWithReturn(node.body)
-        }, "\}, \"{access.first.value}\"")
+            compileBodyWithReturn(node.body, false)
+        }, "\}, [")
+
+        for(node.annotations) do { annotation ->
+            compileExpression(annotation)
+        } separatedBy(", ")
+        
+        write("]")
 
         for(sig) do { part ->
             write(", ")
@@ -216,7 +227,7 @@ class javascriptCompiler.new(outFile) {
             annotation.value == "writable"
         }) then {
             wrapln("self[\"{name}:=\"] = function(value) \{", {
-                line("return ({escaped} = value, {unitValue})")
+                line("{escaped} = value")
             }, "\}")
         }
     }
@@ -238,22 +249,33 @@ class javascriptCompiler.new(outFile) {
         write(")")
     }
 
-    // Compiles an if statement.
+    // Compiles an if statement (with no else block).
     method compileIf(node) {
-        wrapln({
-            write("if ($.asBoolean(")
+        wrap({
+            write("$(prelude, \"if()then\", self, {node.line})(")
             compileExpression(node.value)
-            write(")) \{")
+            write(")(function() \{")
         }, {
-            compileExecution(node.thenblock)
+            compileBodyWithReturn(node.thenblock, true)
         }, {
-            write("\}")
+            write("\})")
+        })
+    }
 
-            if(node.elseblock.size != 0) then {
-                wrap(" else \{", {
-                    compileExecution(node.elseblock)
-                }, "\}")
-            }
+    // Compiles an if-else statement.
+    method compileIfElse(node) {
+        wrap({
+            write("$(prelude, \"if()then()else\", self, {node.line})(")
+            compileExpression(node.value)
+            write(")(function() \{")
+        }, {
+            compileBodyWithReturn(node.thenblock, true)
+        }, {
+            write("})(function() \{")
+        }, {
+            compileBodyWithReturn(node.elseblock, true)
+        }, {
+            write("})")
         })
     }
 
@@ -270,10 +292,6 @@ class javascriptCompiler.new(outFile) {
             compileClass(node)
         } case { "object" ->
             compileObject(node)
-        } case { "defdec" ->
-            compileDefExpr(node)
-        } case { "vardec" ->
-            compileVarExpr(node)
         } case { "block" ->
             compileBlock(node)
         } case { "bind" ->
@@ -285,11 +303,19 @@ class javascriptCompiler.new(outFile) {
         } case { "call" ->
             compileCall(node)
         } case { "if" ->
-            compileTernary(node)
+            if(node.elseblock.size > 0) then {
+                compileIfElse(node)
+            } else {
+                compileIf(node)
+            }
         } case { "index" ->
             compileIndex(node)
         } case { "op" ->
-            compileOp(node)
+            compileCall(ast.callNode.new(
+                    ast.memberNode.new(node.value, node.left), [object {
+                def name is public, readable = node.value
+                def args is public, readable = [node.right]
+            }]))
         } case { "array" ->
             compileArray(node)
         } case { "matchcase" ->
@@ -305,20 +331,15 @@ class javascriptCompiler.new(outFile) {
     }
 
     method compileIdentifier(node) {
-        match(node.value)
-          case { name : ("true" | "false") ->
-            write("$[\"{name}\"]")
-        } case { name ->
-            write(escapeIdentifier(name))
-        }
+        write(escapeIdentifier(node.value))
     }
 
     method compileNumber(node) {
-        write("$.number({node.value})")
+        write(node.value)
     }
 
     method compileString(node) {
-        write("$.string(\"{node.value}\")")
+        write("\"{node.value}\"")
     }
 
     method compileClass(node) {
@@ -327,55 +348,37 @@ class javascriptCompiler.new(outFile) {
 
     // Compiles a Grace object into a closure that evaluates to an object.
     method compileObject(node) {
-        wrap("(function() \{", {
-
-            line("var self = $.object()")
+        wrap("$(function(self) \{", {
 
             // Compile the standard execution first. This will introduce the
             // values into the closure.
             compileExecution(node.value)
 
-            line("return self")
-            // wrapLine("return \{", {
-                
-            //     // Build the object declarations into the resulting object.
-            //     compileDeclarations(node.value)
-
-            // }, "\}")
         }, "\})()")
-    }
-
-    // A def declaration can be an expression. In this case it executes the
-    // value being assigned and then evaluates to the unit value.
-    method compileDefExpr(node) {
-        write("(")
-        compileExpression(node.value)
-        write(", {unitValue})")
-    }
-
-    // A var declaration can be an expression. In this case it executes the
-    // value being assigned (if it exists) and then evaluates to the unit value.
-    method compileVarExpr(node) {
-        if(node.value) then {
-            write("(")
-            compileExpression(node.value)
-            write(", {unitValue})")
-        } else {
-            write(unitValue)
-        }
     }
 
     // Compiles a block into an anonymous function.
     method compileBlock(node) {
-        write("$.block(function(")
+        write("function(")
 
         doAll(utils.map(node.params) with { param ->
             { compileExpression(param) }
         }) separatedBy(", ")
 
+        def pattern = node.matchingPattern
+
+        if(pattern != false) then {
+            print(pattern)
+        }
+
         wrap(") \{", {
-            compileBodyWithReturn(node.body)
-        }, "\})")
+            compileBodyWithReturn(node.body, true)
+        }, "\}")
+
+        if(pattern != false) then {
+            write(", ")
+            compileExpression(pattern)
+        }
     }
 
     // Compiles a Grace bind into an assignment.
@@ -395,8 +398,9 @@ class javascriptCompiler.new(outFile) {
         // TODO Escape the name.
         def name = node.value.value
 
+        write("$(")
         compileExpression(node.value.in)
-        write(safeAccess(name) ++ "(")
+        write(", \"{name}\", self, {node.line})(")
 
         doAll(utils.map(node.with) with { part ->
             {
@@ -409,34 +413,10 @@ class javascriptCompiler.new(outFile) {
         write(")")
     }
 
-    // Compiles a Grace if statement into a ternary.
-    method compileTernary(node) {
-        write("($.asBoolean(")
-        compileExpression(node.value)
-        write(") ? ")
-        compileEagerBlock(node.thenblock)
-        write(" : ")
-
-        if(node.elseblock != false) then {
-            compileEagerBlock(node.elseblock)
-        } else {
-            write(unitValue)
-        }
-
-        write(")")
-    }
-
     // Compiles a Grace indexing operation into a method call.
     method compileIndex(node) {
         compileCall(ast.callNode.new(ast.memberNode.new("[]", node.value),
                 [node.index]))
-    }
-
-    method compileOp(node) {
-        compileExpression(node.left)
-        write("[\"{node.value}\"](")
-        compileExpression(node.right)
-        write(")")
     }
 
     method compileArray(node) {
@@ -448,7 +428,22 @@ class javascriptCompiler.new(outFile) {
     }
 
     method compileMatch(node) {
-        // TODO
+        write("$.match(")
+        compileExpression(node.value)
+
+        for(node.cases) do { case ->
+            write(", ")
+            compileExpression(case)
+        }
+
+        write(", ")
+        if(node.elsecase != false) then {
+            compileExpression(node.elsecase)
+        } else {
+            write("null")
+        }
+
+        write(")")
     }
 
     method compileEagerBlock(body : List) {
@@ -458,23 +453,27 @@ class javascriptCompiler.new(outFile) {
             compileExpression(body.first)
         } else {
             wrap("(function() \{", {
-                compileBodyWithReturn(body)
+                compileBodyWithReturn(body, true)
             }, "\})()")
         }
     }
 
-    method compileBodyWithReturn(body : List) {
+    method compileBodyWithReturn(body : List, nested : Boolean) {
         def last = body.pop
 
         compileExecution(body)
 
-        statement("return ", {
-            compileExpression(if(last.kind == "return") then {
-                last.value
-            } else {
-                last
+        if(nested && { last.kind == "return" }) then {
+            compileStatement(last)
+        } else {
+            statement("return ", {
+                compileExpression(if(last.kind == "return") then {
+                    last.value
+                } else {
+                    last
+                })
             })
-        })
+        }
     }
 
 
@@ -553,6 +552,22 @@ class javascriptCompiler.new(outFile) {
         }
     }
 
+    // Evaluates the do block for every item in the given collection, separating
+    // them with the given block or string.
+    method for(iter) do(block) separatedBy(by) {
+        var once := false
+
+        for(iter) do { value ->
+            if(once) then {
+                writeOrApply(by)
+            }
+
+            block.apply(value)
+
+            once := true
+        }
+    }
+
     // Invokes apply on the given object if it is a block, otherwise it writes
     // it out.
     method writeOrApply(maybe) {
@@ -582,7 +597,7 @@ def keywords = [ "with", "break", "new", "public", "private" ]
 
 method escapeIdentifier(identifier : String) -> String {
     if(keywords.contains(identifier)) then {
-        return "${identifier}"
+        return "_{identifier}"
     }
 
     identifier.replace("'") with("$").replace("()") with("_")
