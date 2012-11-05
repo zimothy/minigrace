@@ -186,7 +186,8 @@ class javascriptCompiler.new(outFile) {
             write(if(vararg != false) then { "$([" } else { "[" })
 
             doAll(utils.map(part.params) with { param ->
-                { compileExpression(param.dtype) }
+                { write("prelude.Dynamic()") }
+                //{ compileExpression(param.dtype) }
             }) separatedBy(", ")
 
             write(if(vararg != false) then { "])" } else { "]" })
@@ -331,7 +332,7 @@ class javascriptCompiler.new(outFile) {
         } case { "return" ->
             compileReturn(node)
         } else {
-            print("Unrecognised expression: {node.kind}")
+            print("Unrecognised expression `{node.kind}' on line {node.line}")
             sys.exit(1)
         }
     }
