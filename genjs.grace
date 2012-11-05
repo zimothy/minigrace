@@ -1,8 +1,8 @@
-import ast
-import sys
-import unicode
-import util
-import utils
+def ast     = platform.ast
+def sys     = platform.sys
+def unicode = platform.unicode
+def util    = platform.util
+def utils   = platform.utils
 
 // The name for this is prone to change, so it makes sense to centralize it.
 def unitValue = "done"
@@ -18,7 +18,6 @@ method compile(nodes : List, outFile, moduleName : String, runMode : String,
     moduleName := moduleName.replace("/") with(".")
 
     var imports := utils.map(split.wasTrue) with { node -> node.value }
-    imports := utils.concat(["prelude"], imports)
 
     compiler.compileModule(moduleName, imports, split.wasFalse)
 
@@ -38,9 +37,9 @@ class javascriptCompiler.new(outFile) {
         // create the object if it does not exist, then add the module to it.
         wrapLine("(function() \{", {
 
-            line("var $, self")
+            line("var $, doImport, instance, prelude")
 
-            wrapln("function Module(done) \{", {
+            wrapln("function makeModule(done) \{", {
 
                 wrapLine("var $src = [", {
                     for(util.cLines) do { srcLine ->
@@ -52,11 +51,10 @@ class javascriptCompiler.new(outFile) {
                 // The imports need to be inside this function to allow the
                 // outer closure to run correctly.
                 for(imports) do { module ->
-                    line("var {module} = $.{module}()")
+                    line("var {module} = doImport(\"{module}\")")
                 }
 
                 line("var outer = prelude")
-                line("$ = $[\"native\"]")
 
                 // The module is compiled as a standard object.
                 statement("return ", {
@@ -69,18 +67,26 @@ class javascriptCompiler.new(outFile) {
 
             // Modules are singletons. This method of importing ensures that
             // only one instance of the module is ever created.
-            wrapln("function instance() \{", {
-                line("return self ? self : self = new Module()")
+            wrapln("function getInstance() \{", {
+                line("return instance ? instance : instance = makeModule()")
             }, "\}")
 
-            // Compatible with both the browser and Node.js
+            // Compatible with both the browser and Node.js.
             wrapln("if (typeof module === 'undefined') \{", {
                 line("$ = this.grace")
-                line("${safeAccess(name)} = instance")
+                line("${safeAccess(name)} = getInstance")
+                wrapLine("doImport = function(name) \{", {
+                    line("return $[name]()")
+                }, "}")
             }, "\} else \{", {
                 line("$ = require('./js/gracelib')")
-                line("module.exports = instance")
+                line("module.exports = getInstance")
+                wrapLine("doImport = function(name) \{", {
+                    line("return require('./' + name)()")
+                }, "}")
             }, "\}")
+
+            line("prelude = $.prelude")
 
         }, "\})()")
 
@@ -145,7 +151,7 @@ class javascriptCompiler.new(outFile) {
             (value == "public") || (value == "confidential") ||
                 (value == "private")
         }
-        
+
         if(access.size > 1) then {
             util.linenumv := node.line
             util.lineposv := access.at(2).linePos
@@ -167,23 +173,23 @@ class javascriptCompiler.new(outFile) {
 
         wrap(") \{", {
             compileBodyWithReturn(node.body, false)
-        }, "\}, [")
+        }, "\}, \"{access}\"")
 
-        for(node.annotations) do { annotation ->
-            compileExpression(annotation)
-        } separatedBy(", ")
-        
-        write("]")
+        //for(node.annotations) do { annotation ->
+            //compileExpression(annotation)
+        //} separatedBy(", ")
 
         for(sig) do { part ->
             write(", ")
 
-            def size = part.params.size
-            if(part.vararg != false) then {
-                write("$.varargs({size + 1})")
-            } else {
-                write(size.asString)
-            }
+            def vararg = part.vararg
+            write(if(vararg != false) then { "$([" } else { "[" })
+
+            doAll(utils.map(part.params) with { param ->
+                { compileExpression(param.dtype) }
+            }) separatedBy(", ")
+
+            write(if(vararg != false) then { "])" } else { "]" })
         }
 
         write(");\n")
@@ -354,7 +360,7 @@ class javascriptCompiler.new(outFile) {
             // values into the closure.
             compileExecution(node.value)
 
-        }, "\})()")
+        }, "\})")
     }
 
     // Compiles a block into an anonymous function.
@@ -630,3 +636,4 @@ method jsonField(name : String) -> String {
 type Applicable = {
     apply
 }
+

@@ -15,13 +15,8 @@
     // Wraps the constructor into a Grace class, using new as the class method.
     function makeClass(Constructor, types) {
         return {
-            'new': method(construct(Constructor), "public", types);
+            'new': nativeMethod(construct(Constructor), types)
         };
-    }
-
-    // Constructs a Grace Type object from the given constructor's prototype.
-    function makeType(Constructor) {
-        return getter(new Type(Constructor.prototype));
     }
 
     var hasOwnProperty = Object.prototype.hasOwnProperty;
@@ -30,7 +25,7 @@
     function extend(object, from) {
         for (var key in from) {
             if (hasOwnProperty.call(from, key)) {
-                object[key] = from;
+                object[key] = from[key];
             }
         }
         return object;
@@ -113,71 +108,119 @@
     }
 
     // Late-bound matchers.
-    function match(result, bindings) {
+    function successfulMatch(result, bindings) {
         var sm = call(prelude, "SuccessfulMatch");
         return callWith(sm, "new")(result, bindings);
     }
 
-    function fail(result) {
+    function failedMatch(result) {
         var fm = call(prelude, "FailedMatch");
         return callWith(fm, "new")(result);
     }
 
 
-    /** Prelude definitions ***************************************************/
-
-    var print = nativeMethod(typeof console === "object" &&
-        typeof console.log === "function" ? function(value) {
-            console.log(asString(value));
-        } : function() {}, [doneType]);
-
-    var if_then = nativeMethod(function(condition, thenBlock) {
-        if (asBoolean(condition)) {
-            return thenBlock.apply();
-        }
-    }, [booleanType], [blockType]);
-
-    var if_then_else = nativeMethod(function(condition, thenBlock, elseBlock) {
-        if (asBoolean(condition)) {
-            return thenBlock.apply();
-        }
-
-        return elseBlock.apply();
-    }, [booleanType], [blockType]);
-
-    var for_do = nativeMethod(function(iterable, block) {
-        var iterator = iterable.iter();
-        while (asBoolean(iterator.havemore())) {
-            block.apply(iterator.next());
-        }
-    }, [iterableType], [blockType]);
-
-    var while_do = nativeMethod(function(condition, block) {
-        while (asBoolean(condition.apply())) {
-            block.apply();
-        }
-    }, [blockType], [blockType]);
-
-
     /** Native types **********************************************************/
 
-    var doneType = new Type({
-        asDebugString: [stringType]
+    function typeMatch(names, obj) {
+        for (var name in names) {
+            if (!has(obj, name)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // This isn't an exposed object, it's just enough to get the base types off
+    // the ground for the native objects and methods to be defined.
+    function NativeType(names) {
+        this.names = names;
+    }
+
+    NativeType.prototype = {
+        match: function(obj) {
+            return typeMatch(this.names, obj);
+        },
+        and: function(type) {
+            return new NativeAnd(this, type);
+        },
+        or: function(type) {
+            return new NativeOr(this, type);
+        }
+    };
+
+    function NativeAnd(a, b) {
+        this.a = a;
+        this.b = b;
+    }
+
+    NativeAnd.prototype = extend(new NativeType(), {
+        match: function(obj) {
+            return typeMatch(this.a, obj) && typeMatch(this.b, obj);
+        }
     });
 
-    var objectType = new Type({
-        asDebugString: [stringType],
-        '==':     [[objectType], booleanType],
-        '!=':     [[objectType], booleanType],
-        asString: [stringType]
+    function NativeOr(a, b) {
+        this.a = a;
+        this.b = b;
+    }
+
+    NativeOr.prototype = extend(new NativeType(), {
+        match: function(obj) {
+            return typeMatch(this.a, obj) || typeMatch(this.b, obj);
+        }
     });
+
+    var dynamicType = new NativeType([]);
+
+    var doneType = new NativeType(["asDebugString"])
+
+    var objectType = doneType.and(new NativeType(["==", "!=", "asString"]));
+
+    var patternType = objectType.and(new NativeType(["match", "&", "|"]));
+
+    var iterableType = objectType.and(new NativeType(["iter"]));
+
+    var booleanType = patternType.and(new NativeType([
+        "not", "prefix!", "&&", "||", "andAlso", "orElse"
+    ]));
+
+    var numberType = patternType.and(new NativeType([
+        "+", "-", "*", "/", "%", "++", "..", "<", ">", "<=", ">=", "prefix-",
+        "hashcode", "inBase", "truncate"
+    ]));
+
+    var stringType = patternType.and(iterableType.and(new NativeType([
+        "++", "at", "[]", "size", "replace()with", "substringFrom()to", "iter",
+        "ord", "hashcode", "indices", "asNumber"
+    ])));
+
+    var blockType = objectType.and(new NativeType(["apply", "pattern"]));
+
+    var listType = iterableType.and(new NativeType([
+        "concat", "size", "at", "at()put", "[]", "[]:=", "contains", "push",
+        "pop", "first", "last", "prepended", "indices"
+    ]));
+
+    var nativeTypes = {
+        Dynamic: dynamicType,
+        Done:    doneType,
+        Object:  objectType,
+        Pattern: patternType,
+        Boolean: booleanType,
+        Number:  numberType,
+        String:  stringType,
+        Block:   blockType,
+        List:    listType
+    };
 
 
     /** Native objects ********************************************************/
 
     // Singleton and constructor wrapper definitions.
     var done;
-    var varargs = construct(VarArgs);
+    var varargs = function(value) {
+        return new VarArgs(value);
+    };
 
 
     // Grace object constructor.
@@ -226,11 +269,11 @@
             '&&': nativeMethod(function(self, other) {
                 return self ? (has(other, "apply") ?
                     call(other, "apply", self) : other) : self;
-            }, [booleanType['|'](blockType)]),
+            }, [booleanType.or(blockType)]),
             '||': nativeMethod(function(self, other) {
                 return self ? self : (has(other, "apply") ?
                     call(other, "apply", self) : other);
-            }, [booleanType['|'](blockType)]),
+            }, [booleanType.or(blockType)]),
             andAlso: nativeMethod(function(self, other) {
                 return self ? other.apply() : self;
             }, [blockType]),
@@ -274,7 +317,7 @@
                     from = to;
                     to = self;
                 }
-                
+
                 var range = [];
                 for (; from <= to; from++) {
                     range.push(number(from));
@@ -338,7 +381,7 @@
             }),
             'replace()with': nativeMethod(function(self, what, wth) {
                 what = new RegExp(asString(what).replace(/(.)/g, '\\$1'), 'g');
-                return self.replace(what, asString(wth)));
+                return self.replace(what, asString(wth));
             }, [stringType], [stringType]),
             'substringFrom()to': nativeMethod(function(self, from, to) {
                 return self.substring(asNumber(from), asNumber(to));
@@ -406,7 +449,7 @@
                 return failedMatch(value);
             }, [objectType]),
             pattern: nativeMethod(function() {})
-        },
+        }),
         // The only primitive object in this system is the array.
         object: extend(new Object(), {
             '==': nativeMethod(function(self, other) {
@@ -490,21 +533,20 @@
 
     // Grace type.
     function Type(type) {
-        this.type = type;
+        extend(this, {
+            match: nativeMethod(function(obj) {
+                for (var key in type) {
+                    if (!has(obj, key) || obj[key].length !== type[key].length) {
+                        return failedMatch(obj);
+                    }
+                }
+
+                return successfulMatch(obj);
+            }, [objectType])
+        });
     }
 
-    Type.prototype = inherits(Pattern, {
-        match: method(function(obj) {
-            var type = this.type;
-            for (var key in type) {
-                if (!has(obj, key) || obj[key].length !== type[key].length) {
-                    return failedMatch(obj);
-                }
-            }
-
-            return successfulMatch(obj);
-        }, "native", [doneType])
-    })
+    Type.prototype = new Object();
 
 
     // Var args notifier.
@@ -513,87 +555,84 @@
     }
 
 
-    function module(name, source, func) {
-        source = source.split("\n");
+    // Module constructor.
+    //function module(name, source, func) {
+        //source = source.split("\n");
 
-        try {
-            func(defineMethod, makeGetMethod(src));
-        } catch (ex) {
-            if (!ex.reported) {
-                console.log("Unexpected module failure: " + ex);
-            }
-        }
-    }
+        //try {
+            //func(defineMethod, makeGetMethod(src));
+        //} catch (ex) {
+            //if (!ex.reported) {
+                //console.log("Unexpected module failure: " + ex);
+            //}
+        //}
+    //}
 
     // Grace exceptions.
     function Exception(name, message) {
-        this._name = name;
-        this._message = message;
-        this._stack = [];
+        extend(this, {
+            name: nativeMethod(function() {
+                return name;
+            }),
+            message: nativeMethod(function() {
+                return message;
+            }),
+            asString: nativeMethod(function() {
+                return name + ": " + message;
+            })
+        });
     }
 
-    Exception.prototype = inherits(Object, {
-        name: nativeMethod(function() {
-            return this._name;
-        }),
-        message: nativeMethod(function() {
-            return this._message;
-        }),
-        asString: nativeMethod(function() {
-            return this._name + ": " + this._message;
-        })
-    });
+    Exception.prototype = new Object();
 
     function ExceptionFactory(name) {
-        this._name = name;
+        extend(this, {
+            name: nativeMethod(function() {
+                return name;
+            }),
+            raise: nativeMethod(function(message) {
+                throw new Exception(name, message);
+            }),
+            refine: nativeMethod(function(name) {
+                return new ExceptionFactory(name);
+            }),
+            asString: nativeMethod(function() {
+                return name;
+            })
+        });
     }
 
-    ExceptionFactory.prototype = inherits(Object, {
-        name: nativeMethod(function() {
-            return this._name;
-        }),
-        raise: nativeMethod(function(message) {
-            throw new Exception(this._name, message);
-        }),
-        refine: nativeMethod(function(name) {
-            return new ExceptionFactory(name);
-        }),
-        asString: nativeMethod(function() {
-            return this._name;
-        })
-    });
+    ExceptionFactory.prototype = new Object();
 
+
+    // Return jump wrapper.
     function Return() {}
 
     Return.prototype.toString = function() {
         return "Return invoked outside of containing method";
     };
 
+    var reportError = typeof console !== undefined &&
+        typeof console.error === "function" ? console.error : function() {};
 
     // Constructs a method with the given access annotation and function. Also
     // takes information about the signature of the method.
-    function defineMethod(object, name, func, annotations) {
+    function defineMethod(object, name, func, access) {
         var params = slice.call(arguments, 4);
         if (params.length === 0) {
             params = [[]];
         }
 
-        function LocalReturn(value) {
-            this.value = value;
-        }
+        function methodFunc(args) {
 
-        LocalReturn.prototype = new Return();
+            function LocalReturn(value) {
+                this.value = value;
+            }
 
-        function localReturn(value) {
-            throw new LocalReturn(value);
-        }
+            LocalReturn.prototype = new Return();
 
-        var reportError = typeof console !== undefined &&
-            typeof console.error === "function" ? console.error : function() {};
-
-        function methodFunc(self, args) {
-            if (access === "native") {
-                return func.apply(self, args);
+            function localReturn(value) {
+                throw new LocalReturn(value);
             }
 
             try {
@@ -616,68 +655,66 @@
             }
         }
 
-        function makeSignature(i) {
-            if (i >= params.length) {
-                return null;
-            }
+        // This relies on the fact that partial application never actually
+        // occurs, despite the currying of methods. Don't use it natively.
+        var args = null;
 
+        // The methods represent mixfix input with currying, so for each
+        // argument list we need to return a new function. This function
+        // recurses through this task.
+        function makeSignature(i) {
             var part = params[i];
             var length = part.length;
 
-            var varargs = length instanceof VarArgs;
-            if (varargs) {
+            var isVarargs = part instanceof VarArgs;
+            if (isVarargs) {
                 length -= 1;
             }
 
-            var next = makeSignature(i + 1);
+            // It's important that this happens outside of the actual function,
+            // as it makes sure that all of the functions are created as the
+            // method is defined, rather than creating them over again every
+            // time the method is called.
+            var next = i >= params.length - 1 ? null : makeSignature(i + 1);
             var called = false;
 
             return function() {
                 if (arguments.length < length) {
-                    throw "Incorrect number of arguments."
+                    // TODO A more detailed explanation of what went wrong here
+                    // would probably be a good idea.
+                    var e = new Exception("ArgumentException",
+                        "Incorrect number of arguments");
+                    throw e;
                 }
 
-                var self = this;
-                var from = 0;
+                var argList = slice.call(arguments, 0, length);
 
-                if (access === "native" && this instanceof Array) {
-                    self = this[0];
-                    from = 1;
-                }
+                args = args === null ? argList : args.concat(argList);
 
-                var args = slice.call(arguments, 0, length);
-
-                if (this instanceof Array) {
-                    args = this.slice(from).concat(args);
-                }
-
-                if (varargs) {
+                if (isVarargs) {
                     args.push(new List(slice.call(arguments, length)));
                 }
 
                 if (next === null) {
-                    return methodFunc(self, args);
+                    var finalArgs = args;
+                    args = null;
+                    return methodFunc(finalArgs);
                 }
 
-                if (access === "native") {
-                    args.splice(0, 0, self);
-                }
-
-                return function() {
-                    return next.apply(args, arguments);
-                };
+                return next;
             }
         }
 
         var signature = makeSignature(0);
 
-        if (access === "native") {
-            signature.access = "public";
-        } else {
-            signature.access = access;
-        }
+        signature.access = access;
 
         return signature;
+    }
+
+    function nativeMethod(func) {
+        func.access = "public";
+        return func;
     }
 
     function call() {
@@ -718,33 +755,56 @@
 
         var method = object[name];
 
-        if (method.access === 'confidential' && context !== object) {
-            var ex =  new Exception("MethodAccessException",
+        if (method.access !== 'public' && context !== object) {
+            var ex = new Exception("MethodAccessException",
                 "Improper access to confidential method");
             ex._stack.push(line);
             throw ex;
-        }
-
-        if (method.access === 'native') {
-            return function() {
-                return method.apply(object, arguments);
-            };
         }
 
         return method;
     }
 
 
+    /** Prelude definitions ***************************************************/
+
+    var print = nativeMethod(typeof console === "object" &&
+        typeof console.log === "function" ? function(value) {
+            console.log(asString(value));
+        } : function() {}, [doneType]);
+
+    var if_then = nativeMethod(function(condition, thenBlock) {
+        if (asBoolean(condition)) {
+            return thenBlock.apply();
+        }
+    }, [booleanType], [blockType]);
+
+    var if_then_else = nativeMethod(function(condition, thenBlock, elseBlock) {
+        if (asBoolean(condition)) {
+            return thenBlock.apply();
+        }
+
+        return elseBlock.apply();
+    }, [booleanType], [blockType]);
+
+    var for_do = nativeMethod(function(iterable, block) {
+        var iterator = iterable.iter();
+        while (asBoolean(iterator.havemore())) {
+            block.apply(iterator.next());
+        }
+    }, [iterableType], [blockType]);
+
+    var while_do = nativeMethod(function(condition, block) {
+        while (asBoolean(condition.apply())) {
+            block.apply();
+        }
+    }, [blockType], [blockType]);
+
+
     /** Native modules in the standard library ********************************/
 
     var prelude = {
         done:             getter(done),
-        Done:             getter(doneType),
-        Object:           getter(objectType),
-        Boolean:          getter(booleanType),
-        Number:           getter(numberType,
-        String:           getter(stringType),
-        Dynamic:          getter(dynamicType),
         print:            print,
         'if()then':       if_then,
         'if()then()else': if_then_else,
@@ -753,28 +813,31 @@
         Exception:        getter(new ExceptionFactory("Exception"))
     };
 
+    for (var nativeType in nativeTypes) {
+        prelude[nativeType] = getter(new Type(nativeTypes[nativeType].names));
+    }
+
 
     /** Global grace export ***************************************************/
 
-    var grace = {
-        'native': extend(function(value) {
-            if (arguments.length > 1) {
-                var type = typeof arguments[3];
-                if (type === "number" || type === "undefined") {
-                    return callWith.apply(this, arguments);
-                } else if (arguments.length > 1) {
-                    return defineMethod.apply(this, arguments);    
-                }
-            } else if (typeof value === "function") {
-                var object = new Object();
-                value(object);
-                return object;
-            } else {
-                return new VarArgs(value);
+    var grace = extend(function(value) {
+        if (arguments.length > 1) {
+            var type = typeof arguments[3];
+            if (type === "number" || type === "undefined") {
+                return callWith.apply(this, arguments);
+            } else if (arguments.length > 1) {
+                return defineMethod.apply(this, arguments);
             }
-        }),
-        prelude: getter(prelude)
-    };
+        } else if (typeof value === "function") {
+            var object = new Object();
+            value(object);
+            return object;
+        } else {
+            return new VarArgs(value);
+        }
+    }, {
+        prelude: prelude
+    });
 
     if (typeof module === "undefined") {
         this.grace = grace;
@@ -783,3 +846,4 @@
     }
 
 })();
+
