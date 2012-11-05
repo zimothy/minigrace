@@ -173,7 +173,7 @@ class javascriptCompiler.new(outFile) {
 
         wrap(") \{", {
             compileBodyWithReturn(node.body, false)
-        }, "\}, \"{access}\"")
+        }, "\}, \"{access.first.value}\"")
 
         //for(node.annotations) do { annotation ->
             //compileExpression(annotation)

@@ -33,7 +33,7 @@
 
     // Evaluates if an object has a method publicly available.
     function has(obj, name) {
-        return obj[name] != null && obj[name].access === 'public';
+        return obj[name] != null;
     }
 
     // Iterator helper.
@@ -570,6 +570,7 @@
 
     // Grace exceptions.
     function Exception(name, message) {
+        this._stack = [];
         extend(this, {
             name: nativeMethod(function() {
                 return name;
@@ -709,7 +710,7 @@
 
         signature.access = access;
 
-        return signature;
+        object[name] = signature;
     }
 
     function nativeMethod(func) {
@@ -755,7 +756,7 @@
 
         var method = object[name];
 
-        if (method.access !== 'public' && context !== object) {
+        if (method.access && method.access !== 'public' && context !== object) {
             var ex = new Exception("MethodAccessException",
                 "Improper access to confidential method");
             ex._stack.push(line);
