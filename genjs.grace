@@ -5,7 +5,7 @@ def util    = platform.util
 def utils   = platform.utils
 
 // The name for this is prone to change, so it makes sense to centralize it.
-def unitValue = "done"
+def unitValue = "prelude.done()"
 
 // Compiles the given nodes into a module with the given name.
 method compile(nodes : List, outFile, moduleName : String, runMode : String,
@@ -74,19 +74,19 @@ class javascriptCompiler.new(outFile) {
             // Compatible with both the browser and Node.js.
             wrapln("if (typeof module === 'undefined') \{", {
                 line("$ = this.grace")
+                line("prelude = $.prelude")
                 line("${safeAccess(name)} = getInstance")
                 wrapLine("doImport = function(name) \{", {
                     line("return $[name]()")
                 }, "}")
             }, "\} else \{", {
                 line("$ = require('./js/gracelib')")
-                line("module.exports = getInstance")
+                line("prelude = $.prelude")
                 wrapLine("doImport = function(name) \{", {
-                    line("return require('./' + name)()")
+                    line("return require('./' + name)")
                 }, "}")
+                line("module.exports = getInstance()")
             }, "\}")
-
-            line("prelude = $.prelude")
 
         }, "\})()")
 
