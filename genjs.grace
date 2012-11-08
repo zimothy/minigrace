@@ -19,7 +19,7 @@ method compile(nodes : List, outFile, moduleName : String, runMode : String,
 
     var imports := utils.map(split.wasTrue) with { node -> node.value }
 
-    compiler.compileModule(moduleName, imports, split.wasFalse)
+    compiler.compileModule(moduleName, imports, split.wasFalse, libPath)
 
     outFile.close
 
@@ -31,7 +31,8 @@ class javascriptCompiler.new(outFile) {
     // Compiles the given module into a function that will return the module
     // object when called. It will execute the body of the module the first time
     // it is called, but will simply return the value on any subsequent calls.
-    method compileModule(name : String, imports : List, body : List) is public {
+    method compileModule(name : String, imports : List, body : List,
+            libPath : String | Boolean) is public {
 
         // Modules get placed into a global object called grace. This code will
         // create the object if it does not exist, then add the module to it.
@@ -80,7 +81,10 @@ class javascriptCompiler.new(outFile) {
                     line("return $[name]()")
                 }, "}")
             }, "\} else \{", {
-                line("$ = require('./js/gracelib')")
+                if(libPath == false) then {
+                    libPath := "./js"
+                }
+                line("$ = require(\"{libPath}/gracelib\")")
                 line("prelude = $.prelude")
                 wrapLine("doImport = function(name) \{", {
                     line("return require('./' + name)")
