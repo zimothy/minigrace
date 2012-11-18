@@ -46,7 +46,8 @@
         var type = typeof obj;
         if (type !== "object" || obj instanceof Array) {
             return name === "asDebugString" || name === "asString" ||
-                name === "==" || name === "!=" || primitives[type] != null;
+                name === "==" || name === "!=" ||
+                primitives[type][name] != null;
         }
 
         return obj[name] != null && (obj[name].access === "public" ||
@@ -852,9 +853,9 @@
         if (arguments.length > 1) {
             var type = typeof arguments[3];
             if (type === "number" || type === "undefined") {
-                return callWith.apply(this, arguments);
-            } else if (arguments.length > 1) {
-                return defineMethod.apply(this, arguments);
+                return callWith.apply(null, arguments);
+            } else {
+                return defineMethod.apply(null, arguments);
             }
         } else if (typeof value === "function") {
             var object = new Object();

@@ -4,7 +4,7 @@ ARCH:=$(shell uname -s)-$(shell uname -m)
 STABLE=d5f6522d5c5e3f5b1f40d77502a66954955d0e5a
 all: minigrace $(OTHER_MODULES)
 
-REALSOURCEFILES = compiler.grace util.grace ast.grace lexer.grace parser.grace typechecker.grace genjs.grace subtype.grace genc.grace mgcollections.grace
+REALSOURCEFILES = compiler.grace util.grace utils.grace ast.grace lexer.grace parser.grace typechecker.grace genjs.grace subtype.grace genc.grace mgcollections.grace
 SOURCEFILES = $(REALSOURCEFILES) buildinfo.grace
 
 ifeq ($(MINIGRACE_BUILD_SUBPROCESSES),)

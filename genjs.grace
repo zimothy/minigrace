@@ -34,11 +34,13 @@ class javascriptCompiler.new(outFile) {
     method compileModule(name : String, imports : List, body : List,
             libPath : String | Boolean) is public {
 
+        def nativePrelude = util.extensions.contains("NativePrelude")
+
         // Modules get placed into a global object called grace. This code will
         // create the object if it does not exist, then add the module to it.
         wrapLine("(function() \{", {
 
-            line("var $, doImport, instance, prelude")
+            line("var $, doImport, instance, _prelude, prelude")
 
             wrapln("function makeModule(done) \{", {
 
@@ -59,8 +61,6 @@ class javascriptCompiler.new(outFile) {
 
                 // The module is compiled as a standard object.
                 statement("return ", {
-
-                    // TODO Search for an inherits node at the top-level.
                     compileObject(ast.objectNode.new(body, false))
                 })
 
@@ -75,17 +75,25 @@ class javascriptCompiler.new(outFile) {
             // Compatible with both the browser and Node.js.
             wrapln("if (typeof module === 'undefined') \{", {
                 line("$ = this.grace")
-                line("prelude = $.prelude")
+                if(nativePrelude) then {
+                    line("prelude = _prelude = $.prelude")
+                } else {
+                    line("prelude = $.StandardPrelude()")
+                }
                 line("${safeAccess(name)} = getInstance")
                 wrapLine("doImport = function(name) \{", {
                     line("return $[name]()")
                 }, "}")
             }, "\} else \{", {
                 if(libPath == false) then {
-                    libPath := "./js"
+                    libPath := "."
                 }
                 line("$ = require(\"{libPath}/gracelib\")")
-                line("prelude = $.prelude")
+                if(nativePrelude) then {
+                    line("prelude = _prelude = $.prelude")
+                } else {
+                    line("prelude = require(\"{libPath}/StandardPrelude\")")
+                }
                 wrapLine("doImport = function(name) \{", {
                     line("return require('./' + name)")
                 }, "}")
@@ -138,9 +146,25 @@ class javascriptCompiler.new(outFile) {
             statement("", { compileReturn(node) })
         } case { "bind" ->
             statement("", { compileBind(node) })
+        } case { "inherits" ->
+            // This is handled in object creation.
+        } case { "type" ->
+            line("console.error('Types not supported.')")
+        } case { "class" ->
+            compileClass(node)
         } else {
             line { compileExpression(node) }
         }
+    }
+
+    // Compiles a class into its object representation.
+    method compileClass(node) {
+        // TODO Use proper values instead of empty strings.
+        def body = [ast.objectNode.new(node.value, node.superclass)]
+        def constructor= ast.methodNode.new(node.constructor, node.signature,
+            body, "")
+        compileStatement(ast.defDecNode.new(node.name,
+            ast.objectNode.new([constructor], ""), ""))
     }
 
     // Compiles a method by attaching a function definition to the current
@@ -150,16 +174,22 @@ class javascriptCompiler.new(outFile) {
         def name = node.value.value
         def sig  = node.signature
 
-        def access = utils.filter(node.annotations) with { annotation ->
+        def accesses = utils.filter(node.annotations) with { annotation ->
             def value = annotation.value
             (value == "public") || (value == "confidential") ||
                 (value == "private")
         }
 
-        if(access.size > 1) then {
+        if(accesses.size > 1) then {
             util.linenumv := node.line
-            util.lineposv := access.at(2).linePos
+            util.lineposv := accesses.at(2).linePos
             util.syntax_error("Bad number of access annotations on {name}")
+        }
+
+        def access = if(accesses.size > 0) then {
+            accesses.first
+        } else {
+            "confidential"
         }
 
         write(indent)
@@ -177,7 +207,7 @@ class javascriptCompiler.new(outFile) {
 
         wrap(") \{", {
             compileBodyWithReturn(node.body, false)
-        }, "\}, \"{access.first.value}\"")
+        }, "\}, \"{access}\"")
 
         //for(node.annotations) do { annotation ->
             //compileExpression(annotation)
@@ -233,13 +263,13 @@ class javascriptCompiler.new(outFile) {
         }) then {
             compileGetter(name, escaped, node.value)
         }
-        
+
         if(utils.for(node.annotations) some { annotation ->
             annotation.value == "writable"
         }) then {
-            wrapln("self[\"{name}:=\"] = function(value) \{", {
+            wrapLine("$(self, \"{name}:=\", function(value) \{", {
                 line("{escaped} = value")
-            }, "\}")
+            }, "\}, \"public\", [prelude.Dynamic()])")
         }
     }
 
@@ -250,7 +280,7 @@ class javascriptCompiler.new(outFile) {
     }
 
     method compileSelfAttach(name : String, body) {
-        wrapln("self{safeAccess(name)} = function() \{", body, "\}")
+        wrapLine("$(self, \"{name}\", function() \{", body, "\}, \"public\", [])")
     }
 
     // Compiles a Grace return node into a jumping return call.
@@ -299,8 +329,6 @@ class javascriptCompiler.new(outFile) {
             compileNumber(node)
         } case { "string" ->
             compileString(node)
-        } case { "class" ->
-            compileClass(node)
         } case { "object" ->
             compileObject(node)
         } case { "block" ->
@@ -353,19 +381,27 @@ class javascriptCompiler.new(outFile) {
         write("\"{node.value}\"")
     }
 
-    method compileClass(node) {
-
-    }
-
     // Compiles a Grace object into a closure that evaluates to an object.
     method compileObject(node) {
-        wrap("$(function(self) \{", {
+        def body = node.value
+        def isInheriting = (body.size > 0) && {
+            body.first.kind == "inherits"
+        }
 
-            // Compile the standard execution first. This will introduce the
-            // values into the closure.
-            compileExecution(node.value)
+        def head = utils.stringIf(isInheriting.not) then("$") ++
+            "(function(self) \{"
 
-        }, "\})")
+        wrap(head, {
+            compileExecution(body)
+        }, if(isInheriting) then {
+            {
+                write("\})(")
+                compileExpression(body.first.value)
+                write(")")
+            }
+        } else {
+            "\})"
+        })
     }
 
     // Compiles a block into an anonymous function.
@@ -415,9 +451,13 @@ class javascriptCompiler.new(outFile) {
 
         doAll(utils.map(node.with) with { part ->
             {
-                doAll(utils.map(part.args) with { arg ->
-                    { compileExpression(arg) }
-                }) separatedBy(", ")
+                if(name == "[]") then {
+                    compileExpression(part)
+                } else {
+                    doAll(utils.map(part.args) with { arg ->
+                        { compileExpression(arg) }
+                    }) separatedBy(", ")
+                }
             }
         }) separatedBy(")(")
 
@@ -431,11 +471,11 @@ class javascriptCompiler.new(outFile) {
     }
 
     method compileArray(node) {
-        write("$.list(")
+        write("[")
         doAll(utils.map(node.value) with { value ->
             compileExpression(value)
         }) separatedBy(", ")
-        write(")")
+        write("]")
     }
 
     method compileMatch(node) {
