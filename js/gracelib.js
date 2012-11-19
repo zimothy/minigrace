@@ -6,6 +6,11 @@
     var slice  = Array.prototype.slice;
     var splice = Array.prototype.splice;
 
+    // Object creator.
+    function newObject() {
+        return new Object();
+    }
+
     // Native method creation helper.
     function nativeObject(func) {
         var object = new Object();
@@ -570,16 +575,14 @@
 
 
     // Grace type.
-    function newType(type) {
+    function newType(names) {
         return nativeObject(function(method) {
             method("match", function(obj) {
-                for (var key in type) {
-                    if (!hasPublicMethod(obj, key) ||
-                            obj[key].length !== type[key].length) {
+                each(names, function(name) {
+                    if (!hasPublicMethod(obj, name)) {
                         return failedMatch(obj);
                     }
                 }
-
                 return successfulMatch(obj);
             }, [objectType]);
         });
@@ -592,19 +595,6 @@
         this.length = args.length;
     }
 
-
-    // Module constructor.
-    //function module(name, source, func) {
-        //source = source.split("\n");
-
-        //try {
-            //func(defineMethod, makeGetMethod(src));
-        //} catch (ex) {
-            //if (!ex.reported) {
-                //console.log("Unexpected module failure: " + ex);
-            //}
-        //}
-    //}
 
     // Grace exceptions.
     function Exception(name, message) {
@@ -810,13 +800,13 @@
 
         method("if()then", function(condition, thenBlock) {
             if (asBoolean(condition)) {
-                return call(thenBlock, "apply");
+                return call(thenBlock, "apply", prelude);
             }
         }, [booleanType], [blockType]);
 
         method("if()then()else", function(condition, thenBlock, elseBlock) {
             if (asBoolean(condition)) {
-                return call(thenBlock, "apply");
+                return call(thenBlock, "apply", prelude);
             }
             return elseBlock.apply();
         }, [booleanType], [blockType]);
@@ -824,15 +814,38 @@
         method("for()do", function(iterable, block) {
             var iterator = call(iterable, "iter");
             while (asBoolean(call(iterator, "havemore"))) {
-                callWith(block, "apply")(call(iterator, "next"));
+                callWith(block, "apply", prelude)(
+                    call(iterator, "next", prelude));
             }
         }, [iterableType], [blockType]);
 
         method("while()do", function(condition, block) {
-            while (asBoolean(condition.apply())) {
-                call(block, "apply");
+            while (asBoolean(call(condition, "apply", prelude))) {
+                call(block, "apply", prelude);
             }
         }, [blockType], [blockType]);
+
+        method("match()case", function(value) {
+            var cases = slice.call(arguments, 1);
+            return each(cases, function(block) {
+                if (asBoolean(calln(block, "match", prelude)(value))) {
+                    return calln(block, "apply", prelude)(value);
+                }
+            });
+        }, [objectType], varargs(blockType));
+
+        method("match()case()else", function(value) {
+            var cases = slice.call(arguments, 1, arguments.length - 1);
+            var elsec = arguments[arguments.length - 1];
+            var found = false;
+            var value = each(cases, function(block) {
+                if (asBoolean(calln(block, "match", preldue)(value))) {
+                    found = true;
+                    return calln(block, "apply", prelude)(value);
+                }
+            });
+            return found ? value : call(elsec, "apply", "prelude");
+        }, [objecType], varargs(blockType));
 
         getter("Exception", newExceptionFactory("Exception"));
 
@@ -849,26 +862,17 @@
 
     /** Global grace export ***************************************************/
 
-    var grace = function(value) {
-        if (arguments.length > 1) {
-            var type = typeof arguments[3];
-            if (type === "number" || type === "undefined") {
-                return callWith.apply(null, arguments);
-            } else {
-                return defineMethod.apply(null, arguments);
-            }
-        } else if (typeof value === "function") {
-            var object = new Object();
-            value(object);
-            return object;
-        } else {
-            return new VarArgs(value);
-        }
+    var grace = {
+        method:  defineMethod,
+        call:    callWith,
+        object:  newObject,
+        type:    newType,
+        varargs: varargs,
+        prelude: prelude,
     };
 
-    grace.prelude = prelude;
-
     if (typeof module === "undefined") {
+        grace.modules = {};
         global.grace = grace;
     } else {
         module.exports = grace;

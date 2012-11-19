@@ -7,6 +7,9 @@ def utils   = platform.utils
 // The name for this is prone to change, so it makes sense to centralize it.
 def unitValue = "prelude.done()"
 
+// Native operations.
+def nativeOps = ["method", "call", "object", "type", "varargs", "match"]
+
 // Compiles the given nodes into a module with the given name.
 method compile(nodes : List, outFile, moduleName : String, runMode : String,
                buildType : String, libPath : String | Boolean) is public {
@@ -40,16 +43,21 @@ class javascriptCompiler.new(outFile) {
         // create the object if it does not exist, then add the module to it.
         wrapLine("(function() \{", {
 
-            line("var $, doImport, instance, _prelude, prelude")
+            line("var grace, doImport, instance, prelude")
 
             wrapln("function makeModule(done) \{", {
 
-                wrapLine("var $src = [", {
+                write("{indent}var ")
+                for(nativeOps) do { op ->
+                    write("${op} = grace.{op}, ")
+                }
+
+                wrap("$src = [", {
                     for(util.cLines) do { srcLine ->
                         write("{indent}\"{srcLine}\"")
                     } separatedBy(",\n")
                     write("\n")
-                }, "]")
+                }, "];\n")
 
                 // The imports need to be inside this function to allow the
                 // outer closure to run correctly.
@@ -74,23 +82,23 @@ class javascriptCompiler.new(outFile) {
 
             // Compatible with both the browser and Node.js.
             wrapln("if (typeof module === 'undefined') \{", {
-                line("$ = this.grace")
+                line("grace = this.grace")
                 if(nativePrelude) then {
-                    line("prelude = _prelude = $.prelude")
+                    line("var _prelude = prelude = grace.prelude")
                 } else {
-                    line("prelude = $.StandardPrelude()")
+                    line("prelude = grace.modules.StandardPrelude()")
                 }
-                line("${safeAccess(name)} = getInstance")
+                line("grace.modules{safeAccess(name)} = getInstance")
                 wrapLine("doImport = function(name) \{", {
-                    line("return $[name]()")
+                    line("return grace.modules[name]()")
                 }, "}")
             }, "\} else \{", {
                 if(libPath == false) then {
                     libPath := "."
                 }
-                line("$ = require(\"{libPath}/gracelib\")")
+                line("grace = require(\"{libPath}/gracelib\")")
                 if(nativePrelude) then {
-                    line("prelude = _prelude = $.prelude")
+                    line("var _prelude = prelude = grace.prelude")
                 } else {
                     line("prelude = require(\"{libPath}/StandardPrelude\")")
                 }
@@ -177,7 +185,7 @@ class javascriptCompiler.new(outFile) {
         def name = node.value
         def escaped = escapeIdentifier(name)
 
-        write(indent ++ "var {escaped} = $(")
+        write(indent ++ "var {escaped} = $type(")
         doAll(utils.map(node.methods) with { meth ->
             {
                 write("\"{meth.value}\"")
@@ -198,7 +206,7 @@ class javascriptCompiler.new(outFile) {
         def access = getAccess(node)
 
         write(indent)
-        write("$(self, \"{name}\", function(")
+        write("$method(self, \"{name}\", function(")
 
         doAll(utils.map(utils.fold(sig, []) with { params, part ->
             if(part.vararg != false) then {
@@ -222,14 +230,14 @@ class javascriptCompiler.new(outFile) {
             write(", ")
 
             def vararg = part.vararg
-            write(if(vararg != false) then { "$([" } else { "[" })
+            write(if(vararg != false) then { "$varargs(" } else { "[" })
 
             doAll(utils.map(part.params) with { param ->
                 { write("prelude.Dynamic()") }
                 //{ compileExpression(param.dtype) }
             }) separatedBy(", ")
 
-            write(if(vararg != false) then { "])" } else { "]" })
+            write(if(vararg != false) then { ")" } else { "]" })
         }
 
         write(");\n")
@@ -274,14 +282,14 @@ class javascriptCompiler.new(outFile) {
         if(utils.for(node.annotations) some { annotation ->
             annotation.value == "writable"
         }) then {
-            wrapLine("$(self, \"{name}:=\", function(value) \{", {
+            wrapLine("$method(self, \"{name}:=\", function(value) \{", {
                 line("{escaped} = value")
             }, "\}, \"{access}\", [prelude.Dynamic()])")
         }
     }
 
     method compileGetter(name : String, escaped : String, access : String) {
-        wrapLine("$(self, \"{name}\", function() \{", {
+        wrapLine("$method(self, \"{name}\", function() \{", {
             line("return {escaped}")
         }, "}, \"{access}\")")
     }
@@ -296,7 +304,7 @@ class javascriptCompiler.new(outFile) {
     // Compiles an if statement (with no else block).
     method compileIf(node) {
         wrap({
-            write("$(prelude, \"if()then\", self, {node.line})(")
+            write("$call(prelude, \"if()then\", self, {node.line})(")
             compileExpression(node.value)
             write(")(function() \{")
         }, {
@@ -309,7 +317,7 @@ class javascriptCompiler.new(outFile) {
     // Compiles an if-else statement.
     method compileIfElse(node) {
         wrap({
-            write("$(prelude, \"if()then()else\", self, {node.line})(")
+            write("$call(prelude, \"if()then()else\", self, {node.line})(")
             compileExpression(node.value)
             write(")(function() \{")
         }, {
@@ -391,19 +399,16 @@ class javascriptCompiler.new(outFile) {
             body.first.kind == "inherits"
         }
 
-        def head = utils.stringIf(isInheriting.not) then("$") ++
-            "(function(self) \{"
-
-        wrap(head, {
+        wrap("(function(self) \{", {
             compileExecution(body)
-        }, if(isInheriting) then {
-            {
-                write("\})(")
+        }, {
+            write("\})(")
+            if(isInheriting) then {
                 compileExpression(body.first.value)
-                write(")")
+            } else {
+                write("$object()")
             }
-        } else {
-            "\})"
+            write(")")
         })
     }
 
@@ -448,7 +453,7 @@ class javascriptCompiler.new(outFile) {
         // TODO Escape the name.
         def name = node.value.value
 
-        write("$(")
+        write("$call(")
         compileExpression(node.value.in)
         write(", \"{name}\", self, {node.line})(")
 
@@ -482,7 +487,10 @@ class javascriptCompiler.new(outFile) {
     }
 
     method compileMatch(node) {
-        write("$.match(")
+        def hasElse = node.elsecase != false
+        def name = "match()case" ++ utils.stringIf(hasElse) then { "()else" }
+
+        write("$call(prelude, {name}, self, {node.line})(")
         compileExpression(node.value)
 
         for(node.cases) do { case ->
@@ -490,11 +498,9 @@ class javascriptCompiler.new(outFile) {
             compileExpression(case)
         }
 
-        write(", ")
-        if(node.elsecase != false) then {
+        if(hasElse) then {
+            write(", ")
             compileExpression(node.elsecase)
-        } else {
-            write("null")
         }
 
         write(")")
