@@ -582,7 +582,7 @@
                     if (!hasPublicMethod(obj, name)) {
                         return failedMatch(obj);
                     }
-                }
+                });
                 return successfulMatch(obj);
             }, [objectType]);
         });
@@ -845,7 +845,7 @@
                 }
             });
             return found ? value : call(elsec, "apply", "prelude");
-        }, [objecType], varargs(blockType));
+        }, [objectType], varargs(blockType));
 
         getter("Exception", newExceptionFactory("Exception"));
 
