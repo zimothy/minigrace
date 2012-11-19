@@ -149,7 +149,7 @@ class javascriptCompiler.new(outFile) {
         } case { "inherits" ->
             // This is handled in object creation.
         } case { "type" ->
-            line("console.error('Types not supported.')")
+            compileType(node)
         } case { "class" ->
             compileClass(node)
         } else {
@@ -161,10 +161,32 @@ class javascriptCompiler.new(outFile) {
     method compileClass(node) {
         // TODO Use proper values instead of empty strings.
         def body = [ast.objectNode.new(node.value, node.superclass)]
-        def constructor= ast.methodNode.new(node.constructor, node.signature,
+        def constructor = ast.methodNode.new(node.constructor, node.signature,
             body, "")
-        compileStatement(ast.defDecNode.new(node.name,
-            ast.objectNode.new([constructor], ""), ""))
+        def defDec = ast.defDecNode.new(node.name,
+            ast.objectNode.new([constructor], ""), "")
+
+        // TODO This should really be pulled off of the class.
+        defDec.annotations.push(ast.identifierNode.new("readable", ""))
+
+        compileDef(defDec)
+    }
+
+    // Compiles a type into a runtime object.
+    method compileType(node) {
+        def name = node.value
+        def escaped = escapeIdentifier(name)
+
+        write(indent ++ "var {escaped} = $(")
+        doAll(utils.map(node.methods) with { meth ->
+            {
+                write("\"{meth.value}\"")
+            }
+        }) separatedBy(", ")
+        write(");\n")
+
+        // TODO Type nodes don't have annotations.
+        compileGetter(name, escaped, "public")
     }
 
     // Compiles a method by attaching a function definition to the current
@@ -172,25 +194,8 @@ class javascriptCompiler.new(outFile) {
     // can be defined (that is, not directly in a block or other method).
     method compileMethod(node) {
         def name = node.value.value
-        def sig  = node.signature
-
-        def accesses = utils.filter(node.annotations) with { annotation ->
-            def value = annotation.value
-            (value == "public") || (value == "confidential") ||
-                (value == "private")
-        }
-
-        if(accesses.size > 1) then {
-            util.linenumv := node.line
-            util.lineposv := accesses.at(2).linePos
-            util.syntax_error("Bad number of access annotations on {name}")
-        }
-
-        def access = if(accesses.size > 0) then {
-            accesses.first
-        } else {
-            "confidential"
-        }
+        def sig = node.signature
+        def access = getAccess(node)
 
         write(indent)
         write("$(self, \"{name}\", function(")
@@ -234,6 +239,7 @@ class javascriptCompiler.new(outFile) {
     method compileDef(node) {
         def name = node.name.value
         def escaped = escapeIdentifier(name)
+        def access = getAccess(node)
 
         statement("var {escaped} = ", {
             compileExpression(node.value)
@@ -242,7 +248,7 @@ class javascriptCompiler.new(outFile) {
         if(utils.for(node.annotations) some { annotation ->
             annotation.value == "readable"
         }) then {
-            compileGetter(name, escaped, node.value)
+            compileGetter(name, escaped, access)
         }
     }
 
@@ -250,6 +256,7 @@ class javascriptCompiler.new(outFile) {
     method compileVar(node) {
         def name = node.name.value
         def escaped = escapeIdentifier(name)
+        def access = getAccess(node)
 
         statement("var {escaped}", {
             if(node.value != false) then {
@@ -261,7 +268,7 @@ class javascriptCompiler.new(outFile) {
         if(utils.for(node.annotations) some { annotation ->
             annotation.value == "readable"
         }) then {
-            compileGetter(name, escaped, node.value)
+            compileGetter(name, escaped, access)
         }
 
         if(utils.for(node.annotations) some { annotation ->
@@ -269,18 +276,14 @@ class javascriptCompiler.new(outFile) {
         }) then {
             wrapLine("$(self, \"{name}:=\", function(value) \{", {
                 line("{escaped} = value")
-            }, "\}, \"public\", [prelude.Dynamic()])")
+            }, "\}, \"{access}\", [prelude.Dynamic()])")
         }
     }
 
-    method compileGetter(name : String, escaped : String, value) {
-        compileSelfAttach(name, {
+    method compileGetter(name : String, escaped : String, access : String) {
+        wrapLine("$(self, \"{name}\", function() \{", {
             line("return {escaped}")
-        })
-    }
-
-    method compileSelfAttach(name : String, body) {
-        wrapLine("$(self, \"{name}\", function() \{", body, "\}, \"public\", [])")
+        }, "}, \"{access}\")")
     }
 
     // Compiles a Grace return node into a jumping return call.
@@ -652,6 +655,34 @@ method escapeIdentifier(identifier : String) -> String {
     }
 
     identifier.replace("'") with("$").replace("()") with("_")
+}
+
+method getAccess(node) -> String {
+    def accesses = utils.filter(node.annotations) with { annotation ->
+        def value = annotation.value
+        (value == "public") || (value == "confidential") ||
+            (value == "private")
+    }
+
+    if(accesses.size > 1) then {
+        def name = if(node.kind == "method") then {
+            node.value
+        } else {
+            node.name
+        }
+
+        util.linenumv := node.line
+        util.lineposv := accesses.at(2).linePos
+        util.syntax_error("Bad number of access annotations on {name}")
+    }
+
+    if(accesses.size > 0) then {
+        accesses.first.value
+    } elseif(util.extensions.contains("DefaultVisibility")) then {
+        "public"
+    } else {
+        "confidential"
+    }
 }
 
 method safeAccess(name : String) -> String {
