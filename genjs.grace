@@ -401,6 +401,7 @@ class javascriptCompiler.new(outFile) {
 
         wrap("(function(self) \{", {
             compileExecution(body)
+            line("return self")
         }, {
             write("\})(")
             if(isInheriting) then {
