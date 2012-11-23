@@ -105,7 +105,11 @@ class javascriptCompiler.new(outFile) {
                 wrapLine("doImport = function(name) \{", {
                     line("return require('./' + name)")
                 }, "}")
-                line("module.exports = getInstance()")
+                wrapln("try \{", {
+                    line("module.exports = getInstance()")
+                }, "\} catch(e) \{", {
+                    line("console.error(e.asString())")
+                }, "\}")
             }, "\}")
 
         }, "\})()")
@@ -399,15 +403,14 @@ class javascriptCompiler.new(outFile) {
             body.first.kind == "inherits"
         }
 
-        wrap("(function(self) \{", {
+        wrap("$object(function(self) \{", {
+            line("self.outer = function() \{ return outer \}")
             compileExecution(body)
-            line("return self")
         }, {
-            write("\})(")
+            write("\}")
             if(isInheriting) then {
+                write(", ")
                 compileExpression(body.first.value)
-            } else {
-                write("$object()")
             }
             write(")")
         })
@@ -439,9 +442,18 @@ class javascriptCompiler.new(outFile) {
 
     // Compiles a Grace bind into an assignment.
     method compileBind(node) {
-        compileExpression(node.dest)
-        write(" = ")
-        compileExpression(node.value)
+        if(node.dest.kind == "member") then {
+            def bind = node.dest.value ++ ":="
+            node.dest.value := bind
+            compileCall(ast.callNode.new(node.dest, [object {
+                def name is readable, public = bind
+                def args is readable, public = [node.value]
+            }]))
+        } else {
+            compileExpression(node.dest)
+            write(" = ")
+            compileExpression(node.value)
+        }
     }
 
     // Compiles a Grace member access into a method call.

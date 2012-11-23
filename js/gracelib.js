@@ -262,7 +262,7 @@
         // Temporary: this should be moved into the prelude.
         defineMethod(self, "print", print, "public", [objectType]);
         defineMethod(self, "==", function(other) {
-            return bool(self === other);
+            return self === other;
         }, "public", [objectType]);
         defineMethod(self, "!=", function(other) {
             var equal = calln(self, "==", self)(other);
@@ -363,7 +363,7 @@
 
                 var range = [];
                 for (; from <= to; from++) {
-                    range.push(number(from));
+                    range.push(from);
                 }
                 return range;
             }, [numberType]);
@@ -671,7 +671,7 @@
                     }
 
                     if (e instanceof Exception) {
-                        //e._stack.push(line);
+                        // e._stack.push(line);
                     }
 
                     throw e;
@@ -707,7 +707,7 @@
                     // TODO A more detailed explanation of what went wrong here
                     // would probably be a good idea.
                     var e = new Exception("ArgumentException",
-                        "Incorrect number of arguments");
+                        "Incorrect number of arguments for method " + name);
                     throw e;
                 }
 
@@ -732,6 +732,7 @@
         var signature = makeSignature(0);
 
         signature.access = access;
+        signature.type = params;
 
         object[name] = signature;
     }
@@ -809,7 +810,7 @@
                 return call(thenBlock, "apply", prelude);
             }
             return elseBlock.apply();
-        }, [booleanType], [blockType]);
+        }, [booleanType], [blockType], [blockType]);
 
         method("for()do", function(iterable, block) {
             var iterator = call(iterable, "iter");
@@ -865,7 +866,35 @@
     var grace = {
         method:  defineMethod,
         call:    callWith,
-        object:  newObject,
+        object:  function(func, inherits) {
+            var obj;
+
+            if (arguments.length === 1) {
+                obj = new Object();
+            } else {
+                var type = typeof inherits;
+                if (type === "undefined") {
+                    throw new Exception("DoneException", "Cannot extend done.");
+                }
+
+                if (type !== "object" || inherits instanceof Array) {
+                    obj = Object.prototype.valueOf.call(inherits);
+                    var methods = primitives[type];
+                    for (var name in methods) {
+                        (function(m) {
+                            method.apply(null, [inherits, name, function() {
+                                m.apply(null, [inherits].concat(arguments));
+                            }, m.access].concat(m.type));
+                        })(methods[name]);
+                    }
+                } else {
+                    obj = inherits;
+                }
+            }
+
+            func(obj);
+            return obj;
+        },
         type:    newType,
         varargs: varargs,
         prelude: prelude,
