@@ -73,7 +73,7 @@ class javascriptCompiler.new(outFile) {
                     line("var {module} = doImport(\"{module}\")")
                 }
 
-                line("var outer = prelude")
+                line("var self = prelude")
 
                 // The module is compiled as a standard object.
                 statement("return ", {
@@ -167,6 +167,7 @@ class javascriptCompiler.new(outFile) {
         // TODO This should really be pulled off of the class.
         defDec.annotations.push(ast.identifierNode.new("readable", ""))
 
+        print(defDec.name)
         compileDef(defDec)
     }
 
@@ -397,8 +398,7 @@ class javascriptCompiler.new(outFile) {
             body.first.kind == "inherits"
         }
 
-        wrap("$object(function(self) \{", {
-            line("self.outer = function() \{ return outer; \}")
+        wrap("$object(self, function(self) \{", {
             compileExecution(body)
         }, {
             write("\}")

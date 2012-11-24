@@ -880,10 +880,10 @@
     var grace = {
         method:  defineMethod,
         call:    callWith,
-        object:  function(func, inherits) {
+        object:  function(outer, func, inherits) {
             var obj;
 
-            if (arguments.length === 1) {
+            if (arguments.length === 2) {
                 obj = new Object();
             } else {
                 var type = typeof inherits;
@@ -906,6 +906,7 @@
                 }
             }
 
+            obj.outer = function() { return outer; };
             func(obj);
             return obj;
         },
