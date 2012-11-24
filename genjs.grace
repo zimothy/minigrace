@@ -88,7 +88,7 @@ class javascriptCompiler.new(outFile) {
                 } else {
                     line("prelude = grace.modules.StandardPrelude()")
                 }
-                line("grace.modules{safeAccess(name)} = getInstance")
+                line("grace.modules[\"{name}\"] = getInstance")
                 wrapLine("doImport = function(name) \{", {
                     line("return grace.modules[name]()")
                 }, "}")
@@ -114,28 +114,6 @@ class javascriptCompiler.new(outFile) {
 
         }, "\})()")
 
-    }
-
-    // The kind of nodes that translate into an object declaration.
-    def declarations = ["vardec", "defdec", "class", "type", "method"]
-
-    // Compile a list of declarations into an object body.
-    method compileDeclarations(nodes : List) {
-        doAll(utils.map(utils.filter(nodes) with { node ->
-            declarations.contains(node)
-        }) with { node ->
-            write(indent)
-            compileField(node)
-        }) separatedBy(",\n")
-
-        write("\n")
-    }
-
-    // Compiles part of an object declaration into a field literal.
-    method compileField(node) {
-        def name = node.name
-
-        write(jsonField(name) ++ ": " ++ name)
     }
 
     // Compiles a list of nodes into a body of code.
@@ -190,11 +168,9 @@ class javascriptCompiler.new(outFile) {
         def escaped = escapeIdentifier(name)
 
         write(indent ++ "var {escaped} = $type(")
-        doAll(utils.map(node.methods) with { meth ->
-            {
-                write("\"{meth.value}\"")
-            }
-        }) separatedBy(", ")
+        for(node.methods) do { meth ->
+            write("\"{meth.value}\"")
+        } separatedBy(", ")
         write(");\n")
 
         // TODO Type nodes don't have annotations.
@@ -212,15 +188,15 @@ class javascriptCompiler.new(outFile) {
         write(indent)
         write("$method(self, \"{name}\", function(")
 
-        doAll(utils.map(utils.fold(sig, []) with { params, part ->
+        for(utils.fold(sig, []) with { params, part ->
             if(part.vararg != false) then {
                 utils.concat(params, part.params, [part.vararg])
             } else {
                 utils.concat(params, part.params)
             }
-        }) with { param -> {
+        }) do { param ->
             compileExpression(param)
-        }}) separatedBy(", ")
+        } separatedBy(", ")
 
         wrap(") \{", {
             compileBodyWithReturn(node.body, false)
@@ -236,10 +212,10 @@ class javascriptCompiler.new(outFile) {
             def vararg = part.vararg
             write(if(vararg != false) then { "$varargs(" } else { "[" })
 
-            doAll(utils.map(part.params) with { param ->
-                { write("prelude.Dynamic()") }
-                //{ compileExpression(param.dtype) }
-            }) separatedBy(", ")
+            for(part.params) do { param ->
+                write("prelude.Dynamic()")
+                //compileExpression(param.dtype)
+            } separatedBy(", ")
 
             write(if(vararg != false) then { ")" } else { "]" })
         }
@@ -420,9 +396,9 @@ class javascriptCompiler.new(outFile) {
     method compileBlock(node) {
         write("function(")
 
-        doAll(utils.map(node.params) with { param ->
-            { compileExpression(param) }
-        }) separatedBy(", ")
+        for(node.params) do { param ->
+            compileExpression(param)
+        } separatedBy(", ")
 
         def pattern = node.matchingPattern
 
@@ -470,17 +446,15 @@ class javascriptCompiler.new(outFile) {
         compileExpression(node.value.in)
         write(", \"{name}\", self, {node.line})(")
 
-        doAll(utils.map(node.with) with { part ->
-            {
-                if(name == "[]") then {
-                    compileExpression(part)
-                } else {
-                    doAll(utils.map(part.args) with { arg ->
-                        { compileExpression(arg) }
-                    }) separatedBy(", ")
-                }
+        for(node.with) do { part ->
+            if(name == "[]") then {
+                compileExpression(part)
+            } else {
+                for(part.args) do { arg ->
+                    compileExpression(arg)
+                } separatedBy(", ")
             }
-        }) separatedBy(")(")
+        } separatedBy(")(")
 
         write(")")
     }
@@ -493,9 +467,9 @@ class javascriptCompiler.new(outFile) {
 
     method compileArray(node) {
         write("[")
-        doAll(utils.map(node.value) with { value ->
+        for(node.value) do { value ->
             compileExpression(value)
-        }) separatedBy(", ")
+        } separatedBy(", ")
         write("]")
     }
 
@@ -610,21 +584,6 @@ class javascriptCompiler.new(outFile) {
         write(";\n")
     }
 
-    // Writes a list of compilations, separated by the given string.
-    method doAll(list : List) separatedBy(by) {
-        var once := false
-
-        for(list) do { value ->
-            if(once) then {
-                writeOrApply(by)
-            }
-
-            writeOrApply(value)
-
-            once := true
-        }
-    }
-
     // Evaluates the do block for every item in the given collection, separating
     // them with the given block or string.
     method for(iter) do(block) separatedBy(by) {
@@ -702,29 +661,6 @@ method getAccess(node) -> String {
     } else {
         "confidential"
     }
-}
-
-method safeAccess(name : String) -> String {
-    if(keywords.contains(name) || {
-        utils.for(name) all { char ->
-            unicode.isLetter(char) || unicode.isNumber(char)
-        }.not
-    }) then {
-        "[\"{name}\"]"
-    } else {
-        ".{name}"
-    }
-}
-
-// Escapes a Grace identifier if it contains invalid JSON field name characters.
-method jsonField(name : String) -> String {
-    for(name) do { char ->
-        if(char == "'") then {
-            return "\"{name}\""
-        }
-    }
-
-    name
 }
 
 // A reified instance of the Block type.
