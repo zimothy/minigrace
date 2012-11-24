@@ -430,7 +430,7 @@
                 return self + asString(other);
             }, [objectType]);
             method("at", function(self, index) {
-                return self.charAt(asNumber(index));
+                return self.charAt(asNumber(index - 1));
             }, [numberType]);
             method("size", function(self) {
                 return self.length;
@@ -907,7 +907,12 @@
             }
 
             obj.outer = function() { return outer; };
-            func(obj);
+            var $super = {};
+            for(var name in obj) {
+                $super[name] = obj[name];
+            }
+
+            func(obj, $super);
             return obj;
         },
         type:    newType,

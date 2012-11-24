@@ -167,7 +167,6 @@ class javascriptCompiler.new(outFile) {
         // TODO This should really be pulled off of the class.
         defDec.annotations.push(ast.identifierNode.new("readable", ""))
 
-        print(defDec.name)
         compileDef(defDec)
     }
 
@@ -378,7 +377,11 @@ class javascriptCompiler.new(outFile) {
     }
 
     method compileIdentifier(node) {
-        write(escapeIdentifier(node.value))
+        if(node.value == "super") then {
+            write("$super")
+        } else {
+            write(escapeIdentifier(node.value))
+        }
     }
 
     method compileNumber(node) {
@@ -398,7 +401,7 @@ class javascriptCompiler.new(outFile) {
             body.first.kind == "inherits"
         }
 
-        wrap("$object(self, function(self) \{", {
+        wrap("$object(self, function(self, $super) \{", {
             compileExecution(body)
         }, {
             write("\}")
