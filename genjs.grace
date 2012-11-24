@@ -207,6 +207,7 @@ class javascriptCompiler.new(outFile) {
         } separatedBy(", ")
 
         wrap(") \{", {
+            line("var $return = this")
             compileBodyWithReturn(node.body, false)
         }, "\}, \"{access}\"")
 
@@ -225,7 +226,14 @@ class javascriptCompiler.new(outFile) {
                 //compileExpression(param.dtype)
             } separatedBy(", ")
 
-            write(if(vararg != false) then { ")" } else { "]" })
+            write(if(vararg != false) then {
+                if(part.params.size > 0) then {
+                    write(", ")
+                }
+                "prelude.Dynamic())"
+            } else {
+                "]"
+            })
         }
 
         write(");\n")
@@ -284,7 +292,7 @@ class javascriptCompiler.new(outFile) {
 
     // Compiles a Grace return node into a jumping return call.
     method compileReturn(node) {
-        write("this(")
+        write("$return(")
         compileExpression(node.value)
         write(")")
     }
@@ -390,7 +398,7 @@ class javascriptCompiler.new(outFile) {
         }
 
         wrap("$object(function(self) \{", {
-            line("self.outer = function() \{ return outer \}")
+            line("self.outer = function() \{ return outer; \}")
             compileExecution(body)
         }, {
             write("\}")

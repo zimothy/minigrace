@@ -56,7 +56,7 @@
         }
 
         return obj[name] != null && (obj[name].access === "public" ||
-            typeof obj[name].access !== "undefined");
+            typeof obj[name].access === "undefined");
     }
 
     // Iterator helper.
@@ -384,7 +384,7 @@
                 return self < asNumber(other);
             }, [numberType]);
             method(">", function(self, other) {
-                return self < asNumber(other);
+                return self > asNumber(other);
             }, [numberType]);
             method("<=", function(self, other) {
                 return self <= asNumber(other);
@@ -795,8 +795,9 @@
         var method = object[name];
 
         if (!hasPublicMethod(object, name) && context !== object) {
+            console.log(hasPublicMethod(object, name, true));
             var ex = new Exception("MethodAccessException",
-                "Improper access to confidential method");
+                "Improper access to confidential method " + name);
             ex._stack.push(line);
             throw ex;
         }
