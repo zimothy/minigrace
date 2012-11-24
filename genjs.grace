@@ -439,7 +439,6 @@ class javascriptCompiler.new(outFile) {
 
     // Compiles a Grace method call into a function or method call.
     method compileCall(node) {
-        // TODO Escape the name.
         def name = node.value.value
 
         write("$call(")

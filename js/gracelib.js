@@ -79,8 +79,8 @@
 
     // Conversion helpers.
     function asBoolean(value) {
-        if (typeof value === "boolean") {
-            return value;
+        if (typeof value === "boolean" || value instanceof Boolean) {
+            return Boolean(value);
         }
 
         var result = false;
@@ -92,8 +92,8 @@
     }
 
     function asNumber(value) {
-        if (typeof value === "number") {
-            return value;
+        if (typeof value === "number" || value instanceof Number) {
+            return Number(value);
         }
 
         throw new Exception("NativeTypeException",
@@ -101,8 +101,8 @@
     }
 
     function asString(value) {
-        if (typeof value === "string") {
-            return value;
+        if (typeof value === "string" || value instanceof String) {
+            return String(value);
         }
 
         var string = hasPublicMethod(value, "asString") ?
@@ -139,7 +139,6 @@
 
     // Late-bound matchers.
     function successfulMatch(result, bindings) {
-                console.log("!");
         var sm = call(prelude, "SuccessfulMatch");
         return callWith(sm, "new")(result, bindings);
     }
@@ -269,7 +268,7 @@
             return call(equal, "not", self);
         }, "public", [objectType]);
         defineMethod(self, "asString", function() {
-            return self.asDebugString();
+            return call(self, "asDebugString", self);
         }, "public");
         defineMethod(self, "asDebugString", function() {
             // TODO Actually describe the object.
@@ -283,6 +282,20 @@
     // Primitive function helper.
     function primitiveObject(func) {
         return nativeObject(function(method) {
+            method("==", function (self, other) {
+                return self === other;
+            }, [objectType, objectType]);
+            method("!=", function(self, other) {
+                var equal = calln(self, "==", self)(other);
+                return call(equal, "not", self);
+            }, [objectType, objectType]);
+            method("asString", function(self) {
+                return call(self, "asDebugString", self);
+            }, [objectType]);
+            method("asDebugString", function(self) {
+                return self.toString();
+            }, [objectType]);
+
             func(function(name) {
                 var types = arguments[2];
                 splice.call(types || arguments, types ? 0 : 2, 0, objectType);
