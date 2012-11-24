@@ -74,7 +74,7 @@
     // Printing to the console, if it's available.
     var print = typeof console === "object" &&
         typeof console.log === "function" ? function(value) {
-                console.log(asString(value));
+            console.log(asString(value));
         } : function() {};
 
     // Conversion helpers.
@@ -109,7 +109,7 @@
             call(value, "asString") : call(value, "asDebugString");
 
         if (typeof string === "string") {
-            return value;
+            return string;
         }
 
         throw new Exception("NativeTypeException",

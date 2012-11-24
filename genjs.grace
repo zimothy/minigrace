@@ -54,9 +54,17 @@ class javascriptCompiler.new(outFile) {
 
                 wrap("$src = [", {
                     for(util.cLines) do { srcLine ->
-                        write("{indent}\"{srcLine}\"")
-                    } separatedBy(",\n")
-                    write("\n")
+                        write("{indent}\"")
+                        for(srcLine) do { char ->
+                            write(if(char.ord > 127) then {
+                                "\\u{char.ord}"
+                            } else {
+                                char
+                            })
+                        }
+                        //write("{indent}\"{srcLine}\"")
+                    } separatedBy("\",\n")
+                    write("\"\n")
                 }, "];\n")
 
                 // The imports need to be inside this function to allow the
@@ -369,7 +377,9 @@ class javascriptCompiler.new(outFile) {
     }
 
     method compileString(node) {
-        write("\"{node.value}\"")
+        def str = node.value.replace("\\") with("\\\\")
+            .replace("\"") with("\\\"").replace("\n") with("\\n")
+        write("\"{str}\"")
     }
 
     // Compiles a Grace object into a closure that evaluates to an object.
