@@ -44,7 +44,7 @@ class javascriptCompiler.new(outFile) {
         // create the object if it does not exist, then add the module to it.
         wrapLine("(function() \{", {
 
-            line("var grace, doImport, instance, prelude")
+            line("var grace, doImport, instance, prelude, nothing")
 
             wrapln("function makeModule(done) \{", {
 

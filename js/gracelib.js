@@ -373,10 +373,12 @@
                 return !self.valueOf();
             });
             method("&", function(self, other) {
-                return new GraceAndPattern(self, other);
+                return calln(call(prelude, "AndPattern", self),
+                    "new", self)(self, other);
             }, [patternType]);
             method("|", function(self, other) {
-                return new GraceOrPattern(self, other);
+                return calln(call(prelude, "OrPattern", self),
+                    "new", self)(self, other);
             }, [patternType]);
             method("&&", function(self, other) {
                 return self ? (hasPublicMethod(other, "apply") ?
@@ -473,13 +475,13 @@
                 return self == asNumber(other) ? successfulMatch(other) :
                     failedMatch(other);
             }, [objectType]);
-            method("|", function(self, other) {
-                var or = call(prelude, "GraceOrPattern", self);
-                return callWith(or, "new", self)(self, other);
-            }, [patternType]);
             method("&", function(self, other) {
-                var and = call(prelude, "GraceOrPattern", self);
-                return callWith(and, "new", self)(self, other);
+                return calln(call(prelude, "AndPattern", self),
+                    "new", self)(self, other);
+            }, [patternType]);
+            method("|", function(self, other) {
+                return calln(call(prelude, "OrPattern", self),
+                    "new", self)(self, other);
             }, [patternType]);
         }),
         string: primitiveObject(function(method) {
@@ -549,13 +551,13 @@
                 return self == asString(other) ? successfulMatch(other) :
                     failedMatch(other);
             }, [objectType]);
-            method("|", function(self, other) {
-                var or = call(prelude, "GraceOrPattern", self);
-                return callWith(or, "new", self)(self, other);
-            }, [patternType]);
             method("&", function(self, other) {
-                var and = call(prelude, "GraceOrPattern", self);
-                return callWith(and, "new", self)(self, other);
+                return calln(call(prelude, "AndPattern", self),
+                    "new", self)(self, other);
+            }, [patternType]);
+            method("|", function(self, other) {
+                return calln(call(prelude, "OrPattern", self),
+                    "new", self)(self, other);
             }, [patternType]);
         }),
         'function': primitiveObject(function(method) {
