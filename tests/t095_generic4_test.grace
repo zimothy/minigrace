@@ -3,7 +3,7 @@ type A<T> = {
     bar(_ : Number) -> T
 }
 
-class Test<T> {
+class Test.new<T> {
     var tval : T
     method foo(x : T) -> Number {
         2
@@ -14,6 +14,6 @@ class Test<T> {
 }
 
 // Instantiated with Dynamic
-def t : A = Test<String>.new
+def t : A = Test.new<String>
 print(t.foo("test"))
 

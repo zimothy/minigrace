@@ -3,7 +3,7 @@ type A<T> = {
     bar(_ : Number) -> T
 }
 
-class Test<T> {
+class Test.new<T> {
     var tval : T
     method foo(x : T) -> Number {
         2
