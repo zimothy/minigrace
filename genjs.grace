@@ -356,6 +356,8 @@ class javascriptCompiler.new(outFile) {
             } else {
                 compileIf(node)
             }
+        } case { "catchcase" ->
+            compileCatchCase(node)
         } case { "index" ->
             compileIndex(node)
         } case { "op" ->
@@ -521,12 +523,34 @@ class javascriptCompiler.new(outFile) {
             compileExpression(case)
         } separatedBy(", ")
 
+        write(")")
+
         if(hasElse) then {
-            write(", ")
+            write("(")
             compileExpression(node.elsecase)
+            write(")")
         }
+    }
+
+    // Compiles a catch-case statement.
+    method compileCatchCase(node) {
+        def hasFin = node.finally != false
+        def name = "catch()case" ++ utils.stringIf(hasFin) then { "()finally" }
+        write("$call(prelude, \"{name}\", self, {node.line})(")
+        compileExpression(node.value)
+        write(")(")
+
+        for(node.cases) do { case ->
+            compileExpression(case)
+        } separatedBy(", ")
 
         write(")")
+
+        if(hasFin) then {
+            write("(")
+            compileExpression(node.finally)
+            write(")")
+        }
     }
 
     method compileEagerBlock(body : List) {

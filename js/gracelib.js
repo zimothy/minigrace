@@ -97,7 +97,7 @@
             return value.valueOf();
         }
 
-        throw new Exception("NativeTypeException",
+        throw new Error("NativeTypeError",
             "Cannot retrieve native number");
     }
 
@@ -113,7 +113,7 @@
             return string;
         }
 
-        throw new Exception("NativeTypeException",
+        throw new Error("NativeTypeError",
             "Cannot retrieve native string");
     }
 
@@ -124,7 +124,7 @@
 
         if (!(hasPublicMethod(value, "size") &&
                 hasPublicMethod(value, "at"))) {
-            throw new Exception("NativeTypeException",
+            throw new Error("NativeTypeError",
                 "Cannot retrieve native list");
         }
 
@@ -637,7 +637,7 @@
             method("last", function(self) {
                 return self[self.length - 1];
             });
-            method("prepended", function(self) {
+            method("prepended", function(self, value) {
                 return [value].concat(self);
             });
             method("indices", function(self) {
@@ -680,8 +680,8 @@
 
 
     // Grace exceptions.
-    function Exception(name, message) {
-        this._stack = [];
+    function AbstractError(name, message) {
+        this.stack = [];
         extend(this, nativeObject(function(method) {
             method("name", function() {
                 return name;
@@ -695,22 +695,45 @@
         }));
     }
 
-    Exception.prototype = new Object();
+    AbstractError.prototype = new Object();
 
-    function newExceptionFactory(name) {
+    function Error(name, message) {
+        AbstractError.call(this, name, message);
+    }
+
+    Error.prototype = new AbstractError();
+
+    var errorMatch = nativeObject(function (method) {
+        method("match", function(value) {
+            return value instanceof Error ? successfulMatch(value) :
+                failedMatch(value);
+        }, [objectType]);
+    });
+
+    function newExceptionFactory(name, Extend) {
+        function Exception(message) {
+            AbstractError.call(this, name, message);
+        }
+
+        Exception.prototype = new Extend();
+
         var self = nativeObject(function(method) {
             method("name", function() {
                 return name;
             });
             method("raise", function(message) {
-                throw new Exception(name, message);
-            });
+                throw new Exception(message);
+            }, [stringType]);
             method("refine", function(name) {
-                return extend(newExceptionFactory(name), self);
-            });
+                return extend(newExceptionFactory(name, Exception), self);
+            }, [stringType]);
             method("asString", function() {
                 return name;
             });
+            method("match", function(value) {
+                return value instanceof Exception ? successfulMatch(value) :
+                    failedMatch(value);
+            }, [objectType]);
         });
         return self;
     }
@@ -755,12 +778,12 @@
                 if (e instanceof LocalReturn) {
                     return e.value;
                 } else {
-                    if (!(e instanceof Return || e instanceof Exception)) {
-                        e = new Exception("InternalException", e.toString());
+                    if (!(e instanceof Return || e instanceof AbstractError)) {
+                        e = new Error("InternalError", e.toString());
                     }
 
-                    if (e instanceof Exception) {
-                        // e._stack.push(line);
+                    if (e instanceof AbstractError) {
+                        //e.stack.push(line);
                     }
 
                     throw e;
@@ -795,7 +818,7 @@
                 if (arguments.length < length) {
                     // TODO A more detailed explanation of what went wrong here
                     // would probably be a good idea.
-                    var e = new Exception("ArgumentException",
+                    var e = new Error("ArgumentError",
                         "Incorrect number of arguments for method " + name);
                     throw e;
                 }
@@ -854,16 +877,16 @@
 
             if (type !== "object" || object instanceof Array) {
                 if (type === "undefined") {
-                    var ex = new Exception("DoneException",
+                    var ex = new Error("DoneError",
                         "Cannot perform action on done");
-                    ex._stack.push(line);
+                    ex.stack.push(line);
                     throw ex;
                 }
 
                 if (primitives[type][name] == null) {
-                    var ex = new Exception("NoSuchMethodException",
+                    var ex = new Error("NoSuchMethodError",
                         "No such method " + name);
-                    ex._stack.push(line);
+                    ex.stack.push(line);
                     throw ex;
                 }
 
@@ -875,18 +898,18 @@
                 };
             }
 
-            var ex = new Exception("NoSuchMethodException",
+            var ex = new Error("NoSuchMethodError",
                 "No such method " + name);
-            ex._stack.push(line);
+            ex.stack.push(line);
             throw ex;
         }
 
         var method = object[name];
 
         if (!hasPublicMethod(object, name) && context !== object) {
-            var ex = new Exception("MethodAccessException",
+            var ex = new Error("MethodAccessError",
                 "Improper access to confidential method " + name);
-            ex._stack.push(line);
+            ex.stack.push(line);
             throw ex;
         }
 
@@ -939,19 +962,40 @@
             return result;
         }, [objectType], varargs(blockType));
 
-        method("match()case()else", function(value, cases) {
-            var elsec = cases.splice(cases.length - 1, 1);
-            var found = false;
-            var value = each(cases, function(i, block) {
+        method("match()case()else", function(value, cases, elsec) {
+            var result, found = false;
+            each(cases, function(i, block) {
                 if (asBoolean(calln(block, "match", prelude)(value))) {
                     found = true;
-                    return calln(block, "apply", prelude)(value);
+                    result = calln(block, "apply", prelude)(value);
+                    return true;
                 }
             });
-            return found ? value : call(elsec, "apply", "prelude");
-        }, [objectType], varargs(blockType));
+            return found ? result : call(elsec, "apply", "prelude");
+        }, [objectType], varargs(blockType), [blockType]);
 
-        getter("Exception", newExceptionFactory("Exception"));
+        method("catch()case", function(block, cases) {
+            try {
+                call(block, "apply", prelude);
+            } catch (e) {
+                calln(prelude, "match()case()else", prelude)(e)
+                    .apply(null, cases)(function() { throw e; });
+            }
+        }, [blockType], varargs(blockType));
+
+        method("catch()case()finally", function(block, cases, fin) {
+            try {
+                call(block, "apply", prelude);
+            } catch (e) {
+                calln(prelude, "match()case()else", prelude)(e)
+                    .apply(null, cases)(function() { throw e; });
+            } finally {
+                call(fin, "apply", prelude);
+            }
+        }, [blockType], varargs(blockType), [blockType]);
+
+        getter("Error", errorMatch);
+        getter("Exception", newExceptionFactory("Exception", AbstractError));
 
         function convertType(type) {
             if (type.names) {
@@ -996,7 +1040,7 @@
             } else {
                 var type = typeof inherits;
                 if (type === "undefined") {
-                    throw new Exception("DoneException", "Cannot extend done.");
+                    throw new Error("DoneError", "Cannot extend done.");
                 }
 
                 if (type !== "object" || type !== "function") {
@@ -1023,7 +1067,7 @@
             var block = function(arg) {
                 var result = calln(block, "match", block)(arg);
                 if (!asBoolean(result)) {
-                    throw new Exception("MatchException",
+                    throw new Error("MatchError",
                         "Applied non-matching value to pattern block.")
                 }
 
