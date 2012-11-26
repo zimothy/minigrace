@@ -139,9 +139,9 @@
     }
 
     // Late-bound matchers.
-    function successfulMatch(result, bindings) {
+    function successfulMatch(result) {
         var sm = call(prelude, "SuccessfulMatch");
-        return callWith(sm, "new")(result, bindings);
+        return callWith(sm, "new")(result, []);
     }
 
     function failedMatch(result) {
@@ -153,18 +153,26 @@
     /** Native types **********************************************************/
 
     function typeMatch(names, obj) {
-        for (var name in names) {
-            if (!hasPublicMethod(obj, name)) {
-                return false;
-            }
+        var test = obj, type = typeof obj;
+        if (type !== "object" || obj instanceof Array) {
+            test = primitives[type];
         }
-        return true;
+
+        var failed = each(names, function(i, name) {
+            if (!hasPublicMethod(test, name)) {
+                return failedMatch(obj);
+            }
+        });
+
+        return failed ? failed : successfulMatch(obj);
     }
 
     // This isn't an exposed object, it's just enough to get the base types off
     // the ground for the native objects and methods to be defined.
     function NativeType(names) {
-        this.names = names;
+        if (names) {
+            this.names = names;
+        }
     }
 
     NativeType.prototype = {
@@ -186,7 +194,12 @@
 
     NativeAnd.prototype = extend(new NativeType(), {
         match: function(obj) {
-            return typeMatch(this.a, obj) && typeMatch(this.b, obj);
+            var a = this.a.match(obj);
+            if (!asBoolean(a)) {
+                return a;
+            }
+
+            return this.b.match(obj);
         }
     });
 
@@ -197,7 +210,12 @@
 
     NativeOr.prototype = extend(new NativeType(), {
         match: function(obj) {
-            return typeMatch(this.a, obj) || typeMatch(this.b, obj);
+            var a = this.a.match(obj);
+            if (asBoolean(a)) {
+                return a;
+            }
+
+            return this.b.match(obj);
         }
     });
 
@@ -343,6 +361,9 @@
     var primitives = {
         'boolean': primitiveObject(function(method) {
             method("==", function(self, other) {
+                if (!asBoolean(booleanType.match(other))) {
+                    return false;
+                }
                 return self === asBoolean(other);
             }, [objectType]);
             method("not", function(self) {
@@ -376,11 +397,14 @@
             });
             method("match", function(self, other) {
                 var eq = callWith(self, "==", self)(other);
-                return eq ? match(other) : fail(other);
+                return eq ? successfulMatch(other) : failedMatch(other);
             }, [objectType]);
         }),
         number: primitiveObject(function(method) {
             method("==", function(self, other) {
+                if (!asBoolean(numberType.match(other))) {
+                    return false;
+                }
                 return self === asNumber(other);
             }, [objectType]);
             method("+", function(self, other) {
@@ -444,9 +468,10 @@
             });
             method("match", function(self, other) {
                 if (!asBoolean(numberType.match(other))) {
-                    return fail(other);
+                    return failedMatch(other);
                 }
-                return self == asNumber(other) ? match(other) : fail(other);
+                return self == asNumber(other) ? successfulMatch(other) :
+                    failedMatch(other);
             }, [objectType]);
             method("|", function(self, other) {
                 var or = call(prelude, "GraceOrPattern", self);
@@ -459,6 +484,9 @@
         }),
         string: primitiveObject(function(method) {
             method("==", function(self, other) {
+                if (!asBoolean(stringType.match(other))) {
+                    return false;
+                }
                 return self === asString(other);
             }, [objectType]);
             method("++", function(self, other) {
@@ -516,9 +544,10 @@
             });
             method("match", function(self, other) {
                 if (!asBoolean(stringType.match(other))) {
-                    return fail(other);
+                    return failedMatch(other);
                 }
-                return self == asString(other) ? match(other) : fail(other);
+                return self == asString(other) ? successfulMatch(other) :
+                    failedMatch(other);
             }, [objectType]);
             method("|", function(self, other) {
                 var or = call(prelude, "GraceOrPattern", self);
@@ -544,6 +573,10 @@
         // The only primitive object in this system is the array.
         object: primitiveObject(function(method) {
             method("==", function(self, other) {
+                if (!asBoolean(listType.match(other))) {
+                    return false;
+                }
+
                 other = asList(other);
 
                 if (self.length !== other.length) {
@@ -623,15 +656,11 @@
 
 
     // Grace type.
-    function newType(names) {
+    function newType() {
+        var names = arguments;
         return nativeObject(function(method) {
             method("match", function(obj) {
-                each(names, function(name) {
-                    if (!hasPublicMethod(obj, name)) {
-                        return failedMatch(obj);
-                    }
-                });
-                return successfulMatch(obj);
+                return typeMatch(names, obj);
             }, [objectType]);
         });
     }
@@ -917,8 +946,27 @@
 
         getter("Exception", newExceptionFactory("Exception"));
 
-        for (var nativeType in nativeTypes) {
-            getter(nativeType, newType(nativeTypes[nativeType].names));
+        function convertType(type) {
+            if (type.names) {
+                return newType.apply(null, type.names);
+            }
+
+            var a = convertType(type.a), b = convertType(type.b);
+            var kind = type instanceof NativeAnd ? "And" : "Or";
+            var cls  = call(prelude, kind + "Pattern", prelude);
+            return calln(cls, "new", prelude)(a, b);
+        }
+
+        for (var name in nativeTypes) {
+            (function(type) {
+                if (type.names) {
+                    getter(name, convertType(type));
+                } else {
+                    method(name, function() {
+                        return convertType(type);
+                    });
+                }
+            })(nativeTypes[name]);
         }
     });
 

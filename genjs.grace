@@ -377,9 +377,15 @@ class javascriptCompiler.new(outFile) {
         }
     }
 
+    def preludes = ["Boolean", "Number", "String"]
+
     method compileIdentifier(node) {
-        if(node.value == "super") then {
+        def value = node.value
+        if(value == "super") then {
             write("$super")
+        } elseif(preludes.contains(value)) then {
+            compileMember(ast.memberNode.new(value,
+                ast.identifierNode.new("prelude", false)))
         } else {
             write(escapeIdentifier(node.value))
         }
@@ -505,7 +511,7 @@ class javascriptCompiler.new(outFile) {
         def hasElse = node.elsecase != false
         def name = "match()case" ++ utils.stringIf(hasElse) then { "()else" }
 
-        write("$call(prelude, {name}, self, {node.line})(")
+        write("$call(prelude, \"{name}\", self, {node.line})(")
         compileExpression(node.value)
 
         for(node.cases) do { case ->
