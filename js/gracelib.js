@@ -2,9 +2,10 @@
 
     /** Helpers ***************************************************************/
 
-    var global = this;
-    var slice  = Array.prototype.slice;
-    var splice = Array.prototype.splice;
+    var global  = this;
+    var slice   = Array.prototype.slice;
+    var splice  = Array.prototype.splice;
+    var valueOf = global.Object.prototype.valueOf;
 
     // Object creator.
     function newObject() {
@@ -80,7 +81,7 @@
     // Conversion helpers.
     function asBoolean(value) {
         if (typeof value === "boolean" || value instanceof Boolean) {
-            return Boolean(value);
+            return value.valueOf();
         }
 
         var result = false;
@@ -93,7 +94,7 @@
 
     function asNumber(value) {
         if (typeof value === "number" || value instanceof Number) {
-            return Number(value);
+            return value.valueOf();
         }
 
         throw new Exception("NativeTypeException",
@@ -102,7 +103,7 @@
 
     function asString(value) {
         if (typeof value === "string" || value instanceof String) {
-            return String(value);
+            return value.valueOf();
         }
 
         var string = hasPublicMethod(value, "asString") ?
@@ -261,7 +262,41 @@
         // Temporary: this should be moved into the prelude.
         defineMethod(self, "print", print, "public", [objectType]);
         defineMethod(self, "==", function(other) {
-            return self === other;
+            if (self === other) {
+                return true;
+            }
+
+            // Shoddy implementation of egal.
+            for (var name in self) {
+                if (name === "==" || name === "!=" || name === "asString" ||
+                        name === "asDebugString" || name === "print") {
+                    continue;
+                }
+
+                var method = self[name];
+                if (method.access !== "public" || method === other[name]) {
+                    continue;
+                }
+
+                if (method.kind !== "def" || other[name] == null ||
+                        other[name].access !== "public" ||
+                        method.kind !== other[name].kind) {
+                    return false;
+                }
+
+                var a = call(self, name, self), b = call(other, name, self);
+                if (!asBoolean(calln(a, "==", self)(b))) {
+                    return false;
+                }
+            }
+
+            for (name in other) {
+                if (self[name] == null) {
+                    return false;
+                }
+            }
+
+            return true;
         }, "public", [objectType]);
         defineMethod(self, "!=", function(other) {
             var equal = calln(self, "==", self)(other);
@@ -311,10 +346,10 @@
                 return self === asBoolean(other);
             }, [objectType]);
             method("not", function(self) {
-                return !self;
+                return !self.valueOf();
             });
             method("prefix!", function(self) {
-                return !self;
+                return !self.valueOf();
             });
             method("&", function(self, other) {
                 return new GraceAndPattern(self, other);
@@ -656,7 +691,13 @@
     // Constructs a method with the given access annotation and function. Also
     // takes information about the signature of the method.
     function defineMethod(object, name, func, access) {
-        var params = slice.call(arguments, 4);
+        var kind = arguments[4], sliceAt = 5;
+        if (typeof kind !== "string")  {
+            sliceAt = 4;
+            kind = "method";
+        }
+
+        var params = slice.call(arguments, sliceAt);
         if (params.length === 0) {
             params = [[]];
         }
@@ -745,6 +786,7 @@
         var signature = makeSignature(0);
 
         signature.access = access;
+        signature.kind = kind;
         signature.type = params;
 
         object[name] = signature;
@@ -762,30 +804,42 @@
     function callWith(object, name, context, line) {
         var type = typeof object;
 
-        if (type !== "object" || object instanceof Array) {
-            if (type === "undefined") {
-                var ex = new Exception("DoneException",
-                    "Cannot perform action on done");
-                ex._stack.push(line);
-                throw ex;
+        if (typeof object[name] !== "function" || type !== "object" ||
+                object instanceof Array && object[name].access == null) {
+
+            if (object instanceof Boolean) {
+                type = "boolean";
+            } else if (object instanceof Number) {
+                type = "number";
+            } else if (object instanceof String) {
+                type = "string";
+            } else if (object instanceof Function) {
+                type = "function";
             }
 
-            if (primitives[type][name] == null) {
-                var ex = new Exception("NoSuchMethodException",
-                    "No such method " + name);
-                ex._stack.push(line);
-                throw ex;
+            if (type !== "object" || object instanceof Array) {
+                if (type === "undefined") {
+                    var ex = new Exception("DoneException",
+                        "Cannot perform action on done");
+                    ex._stack.push(line);
+                    throw ex;
+                }
+
+                if (primitives[type][name] == null) {
+                    var ex = new Exception("NoSuchMethodException",
+                        "No such method " + name);
+                    ex._stack.push(line);
+                    throw ex;
+                }
+
+                var method = primitives[type][name];
+
+                return function() {
+                    splice.call(arguments, 0, 0, object);
+                    return method.apply(null, arguments);
+                };
             }
 
-            var method = primitives[type][name];
-
-            return function() {
-                splice.call(arguments, 0, 0, object);
-                return method.apply(null, arguments);
-            };
-        }
-
-        if (typeof object[name] !== "function") {
             var ex = new Exception("NoSuchMethodException",
                 "No such method " + name);
             ex._stack.push(line);
@@ -795,7 +849,6 @@
         var method = object[name];
 
         if (!hasPublicMethod(object, name) && context !== object) {
-            console.log(hasPublicMethod(object, name, true));
             var ex = new Exception("MethodAccessException",
                 "Improper access to confidential method " + name);
             ex._stack.push(line);
@@ -823,7 +876,7 @@
             if (asBoolean(condition)) {
                 return call(thenBlock, "apply", prelude);
             }
-            return elseBlock.apply();
+            return call(elseBlock, "apply", prelude);
         }, [booleanType], [blockType], [blockType]);
 
         method("for()do", function(iterable, block) {
@@ -880,10 +933,10 @@
     var grace = {
         method:  defineMethod,
         call:    callWith,
-        object:  function(outer, func, inherits) {
+        object:  function(self, outer, func, inherits) {
             var obj;
 
-            if (arguments.length === 2) {
+            if (arguments.length === 3) {
                 obj = new Object();
             } else {
                 var type = typeof inherits;
@@ -891,28 +944,22 @@
                     throw new Exception("DoneException", "Cannot extend done.");
                 }
 
-                if (type !== "object" || inherits instanceof Array) {
-                    obj = Object.prototype.valueOf.call(inherits);
-                    var methods = primitives[type];
-                    for (var name in methods) {
-                        (function(m) {
-                            method.apply(null, [inherits, name, function() {
-                                m.apply(null, [inherits].concat(arguments));
-                            }, m.access].concat(m.type));
-                        })(methods[name]);
-                    }
+                if (type !== "object" || type !== "function") {
+                    obj = valueOf.call(inherits);
                 } else {
                     obj = inherits;
                 }
             }
 
-            obj.outer = function() { return outer; };
+            function Outer() { this.outer = function() { return outer; }; };
+            Outer.prototype = self;
+
             var $super = {};
             for(var name in obj) {
                 $super[name] = obj[name];
             }
 
-            func(obj, $super);
+            func(obj, new Outer(), $super);
             return obj;
         },
         type:    newType,

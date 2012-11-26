@@ -73,7 +73,7 @@ class javascriptCompiler.new(outFile) {
                     line("var {module} = doImport(\"{module}\")")
                 }
 
-                line("var self = prelude")
+                line("var self = prelude, outer")
 
                 // The module is compiled as a standard object.
                 statement("return ", {
@@ -182,7 +182,7 @@ class javascriptCompiler.new(outFile) {
         write(");\n")
 
         // TODO Type nodes don't have annotations.
-        compileGetter(name, escaped, "public")
+        compileGetter(name, escaped, "public", "type")
     }
 
     // Compiles a method by attaching a function definition to the current
@@ -252,7 +252,7 @@ class javascriptCompiler.new(outFile) {
         if(utils.for(node.annotations) some { annotation ->
             annotation.value == "readable"
         }) then {
-            compileGetter(name, escaped, access)
+            compileGetter(name, escaped, access, "def")
         }
     }
 
@@ -272,7 +272,7 @@ class javascriptCompiler.new(outFile) {
         if(utils.for(node.annotations) some { annotation ->
             annotation.value == "readable"
         }) then {
-            compileGetter(name, escaped, access)
+            compileGetter(name, escaped, access, "var")
         }
 
         if(utils.for(node.annotations) some { annotation ->
@@ -280,14 +280,15 @@ class javascriptCompiler.new(outFile) {
         }) then {
             wrapLine("$method(self, \"{name}:=\", function(value) \{", {
                 line("{escaped} = value")
-            }, "\}, \"{access}\", [prelude.Dynamic()])")
+            }, "\}, \"{access}\", \"var\", [prelude.Dynamic()])")
         }
     }
 
-    method compileGetter(name : String, escaped : String, access : String) {
+    method compileGetter(name : String, escaped : String, access : String,
+            kind : String) {
         wrapLine("$method(self, \"{name}\", function() \{", {
             line("return {escaped}")
-        }, "}, \"{access}\")")
+        }, "}, \"{access}\", \"{kind}\")")
     }
 
     // Compiles a Grace return node into a jumping return call.
@@ -401,7 +402,7 @@ class javascriptCompiler.new(outFile) {
             body.first.kind == "inherits"
         }
 
-        wrap("$object(self, function(self, $super) \{", {
+        wrap("$object(self, outer, function(self, outer, $super) \{", {
             compileExecution(body)
         }, {
             write("\}")
@@ -455,7 +456,14 @@ class javascriptCompiler.new(outFile) {
 
     // Compiles a Grace member access into a method call.
     method compileMember(node) {
-        compileCall(ast.callNode.new(node, []))
+        if((node.value == "outer") && {
+            def in = node.in
+            (in.kind == "identifier") && { in.value == "self"}
+        }) then {
+            write("outer")
+        } else {
+            compileCall(ast.callNode.new(node, []))
+        }
     }
 
     // Compiles a Grace method call into a function or method call.
