@@ -8,7 +8,8 @@ def utils   = platform.utils
 def unitValue = "prelude.done()"
 
 // Native operations.
-def nativeOps = ["method", "call", "object", "type", "varargs", "match"]
+def nativeOps =
+    ["method", "call", "object", "type", "varargs", "match", "pattern"]
 
 // Compiles the given nodes into a module with the given name.
 method compile(nodes : List, outFile, moduleName : String, runMode : String,
@@ -422,17 +423,17 @@ class javascriptCompiler.new(outFile) {
 
     // Compiles a block into an anonymous function.
     method compileBlock(node) {
+        def pattern = node.matchingPattern
+
+        if(pattern != false) then {
+            write("$pattern(")
+        }
+
         write("function(")
 
         for(node.params) do { param ->
             compileExpression(param)
         } separatedBy(", ")
-
-        def pattern = node.matchingPattern
-
-        if(pattern != false) then {
-            print(pattern)
-        }
 
         wrap(") \{", {
             compileBodyWithReturn(node.body, true)
@@ -441,6 +442,7 @@ class javascriptCompiler.new(outFile) {
         if(pattern != false) then {
             write(", ")
             compileExpression(pattern)
+            write(")")
         }
     }
 
@@ -513,11 +515,11 @@ class javascriptCompiler.new(outFile) {
 
         write("$call(prelude, \"{name}\", self, {node.line})(")
         compileExpression(node.value)
+        write(")(")
 
         for(node.cases) do { case ->
-            write(", ")
             compileExpression(case)
-        }
+        } separatedBy(", ")
 
         if(hasElse) then {
             write(", ")

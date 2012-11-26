@@ -565,8 +565,12 @@
                 }
                 return self.apply(null, args);
             }, varargs(objectType));
-            method("match", function(value) {
-                return failedMatch(value);
+            method("match", function(self, value) {
+                if (self.pattern) {
+                    return calln(self.pattern, "match", self)(value);
+                }
+
+                return successfulMatch(value);
             }, [objectType]);
             method("pattern", function() {});
         }),
@@ -637,7 +641,7 @@
             method("indices", function(self) {
                 var indices = [];
                 each(self, function(i) {
-                    indices.push(i);
+                    indices.push(i + 1);
                 });
                 return indices;
             });
@@ -922,21 +926,22 @@
             }
         }, [blockType], [blockType]);
 
-        method("match()case", function(value) {
-            var cases = slice.call(arguments, 1);
-            return each(cases, function(block) {
+        method("match()case", function(value, cases) {
+            var result;
+            each(cases, function(i, block) {
                 if (asBoolean(calln(block, "match", prelude)(value))) {
-                    return calln(block, "apply", prelude)(value);
+                    result = calln(block, "apply", prelude)(value);
+                    return true;
                 }
             });
+            return result;
         }, [objectType], varargs(blockType));
 
-        method("match()case()else", function(value) {
-            var cases = slice.call(arguments, 1, arguments.length - 1);
-            var elsec = arguments[arguments.length - 1];
+        method("match()case()else", function(value, cases) {
+            var elsec = cases.splice(cases.length - 1, 1);
             var found = false;
-            var value = each(cases, function(block) {
-                if (asBoolean(calln(block, "match", preldue)(value))) {
+            var value = each(cases, function(i, block) {
+                if (asBoolean(calln(block, "match", prelude)(value))) {
                     found = true;
                     return calln(block, "apply", prelude)(value);
                 }
@@ -1012,6 +1017,19 @@
         },
         type:    newType,
         varargs: varargs,
+        pattern: function(func, pattern) {
+            var block = function(arg) {
+                var result = calln(block, "match", block)(arg);
+                if (!asBoolean(result)) {
+                    throw new Exception("MatchException",
+                        "Applied non-matching value to pattern block.")
+                }
+
+                return func.apply(null, call(result, "bindings", block));
+            };
+            block.pattern = pattern;
+            return block;
+        },
         prelude: prelude,
     };
 
