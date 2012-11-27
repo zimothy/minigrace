@@ -20,19 +20,11 @@
             var args = [object, name, method, "public"].concat(types);
             defineMethod.apply(null, args);
         }, function(name, value) {
-            defineMethod(object, name, function() { return value; }, "public");
+            defineMethod(object, name, function() {
+                return value;
+            }, "public", "getter");
         });
         return object;
-    }
-
-    // Wraps the constructor into a Grace class, using new as the class method.
-    // TODO Do the arguments need to be passed to the Constructor?
-    function makeClass(Constructor, types) {
-        return nativeObject(function(method) {
-            method("new", function() {
-                return new Contructor();
-            }, types);
-        });
     }
 
     var hasOwnProperty = global.Object.prototype.hasOwnProperty;
@@ -51,12 +43,11 @@
     function hasPublicMethod(obj, name) {
         var type = typeof obj;
         if (type !== "object" || obj instanceof Array) {
-            return name === "asDebugString" || name === "asString" ||
-                name === "==" || name === "!=" ||
-                primitives[type][name] != null;
+            return primitives[type][name] != null;
         }
 
         return obj[name] != null && (obj[name].access === "public" ||
+            !(obj instanceof Object) &&
             typeof obj[name].access === "undefined");
     }
 
@@ -328,9 +319,6 @@
             return "object {}";
         }, "public");
     }
-
-    Object.prototype = null;
-
 
     // Primitive function helper.
     function primitiveObject(func) {
@@ -1024,7 +1012,121 @@
 
     /** Native modules in the standard library ********************************/
 
-    // TODO These modules for browser and Node.js
+    var io = nativeObject(function(method, getter) {
+        var fs  = require('fs');
+        var tty = require('tty');
+
+        function newFile(path, flags) {
+            var fd   = fs.openSync(path, flags);
+            var pos  = 0;
+            var self = nativeObject(function(method) {
+                method("close", function() {
+                    fs.closeSync(fd);
+                });
+                method("write", function(data) {
+                    var buf = new Buffer(asString(data));
+                    var len = data.length;
+                    fs.writeSync(fd, buf, 0, len, pos);
+                    pos += len;
+                }, [stringType]);
+                method("getline");
+                method("read", function() {
+                    return fs.readFileSync(path);
+                });
+                method("readBinary", function() {
+                    var buf = new Buffer(1);
+                    fs.readSync(fd, buf, 0, 1, pos++);
+                    return buf.readUInt8(0);
+                });
+                method("writeBinary", function(byte) {
+                    var buf = new Buffer(1);
+                    buf.writeUInt8(byte);
+                    fs.writeSync(fd, buf, 0, 1, pos++);
+                });
+
+                function seek(by) {
+                    pos += asNumber(by).floor();
+                }
+
+                method("seek", seek, [numberType]);
+                method("seekForward", seek, [numberType]);
+                method("seekBackward", function(by) {
+                    seek(call(by, "prefix-", self));
+                });
+
+                method("iter", function() {
+                    return self;
+                });
+                method("havemore", function() {
+                    return isEof();
+                });
+                method("next", function() {
+                    return call(self, "read", self);
+                });
+
+                method("eof", function() {
+                    return isEof();
+                });
+                method("isatty", function() {
+                    return tty.isatty(fd);
+                });
+            });
+
+            return file;
+        }
+
+        var childp = require('child_process');
+
+        function newProcess() {
+            return nativeObject(function(method) {
+                method("wait");
+                method("status");
+                method("success");
+                method("terminated");
+            });
+        }
+
+        getter("input", process.stdin);
+        getter("output", process.stdout);
+        method("error", function(message) {
+            throw new Error("IOError", message);
+        });
+        method("open", function(path, flags) {
+            return newFile(path, flags);
+        });
+        method("system");
+        method("newer");
+        method("exists", function(path) {
+            return fs.existsSync(path);
+        });
+        method("realpath");
+        method("spawn", function() {
+            return newProcess();
+        });
+        method("spawnv", function() {
+            return newProcess();
+        });
+    });
+
+    var sys = nativeObject(function(method, getter) {
+        method("argv", function() {
+            return process.argv;
+        });
+        method("cputime", function() {
+            return Date.now();
+        });
+        method("elapsed", function() {
+            return process.uptime();
+        });
+        method("exit", function(code) {
+            process.exit(code);
+        }, [numberType]);
+        getter("execPath", process.execPath);
+    });
+
+    var js = nativeObject(function(method, getter) {
+        getter("global", global);
+    });
 
 
     /** Global grace export ***************************************************/
@@ -1050,7 +1152,11 @@
                 }
             }
 
-            function Outer() { this.outer = function() { return outer; }; };
+            function Outer() {
+                defineMethod(self, "outer", function() {
+                    return outer;
+                }, "public", "getter");
+            }
             Outer.prototype = self;
 
             var $super = {};
