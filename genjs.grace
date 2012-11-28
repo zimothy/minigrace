@@ -13,7 +13,7 @@ def nativeOps =
 
 // Compiles the given nodes into a module with the given name.
 method compile(nodes : List, outFile, moduleName : String, runMode : String,
-               buildType : String, libPath : String | Boolean) is public {
+               buildType : String, libPath : String) is public {
     util.log_verbose("generating ECMAScript code.")
 
     def compiler = javascriptCompiler.new(outFile)
@@ -36,7 +36,7 @@ class javascriptCompiler.new(outFile) {
     // object when called. It will execute the body of the module the first time
     // it is called, but will simply return the value on any subsequent calls.
     method compileModule(name : String, imports : List, body : List,
-            libPath : String | Boolean) is public {
+            libPath : String) is public {
 
         def nativePrelude = util.extensions.contains("NativePrelude")
 
@@ -63,7 +63,6 @@ class javascriptCompiler.new(outFile) {
                                 char
                             })
                         }
-                        //write("{indent}\"{srcLine}\"")
                     } separatedBy("\",\n")
                     write("\"\n")
                 }, "];\n")
@@ -72,12 +71,7 @@ class javascriptCompiler.new(outFile) {
                 // outer closure to run correctly.
                 for(imports) do { m ->
                     def module = m.value
-                    if((module == "io") || (module == "sys") ||
-                            (module == "js")) then {
-                        line("var {module} = grace.modules.{module}")
-                    } else {
-                        line("var {module} = doImport(\"{module}\")")
-                    }
+                    line("var {module} = doImport(\"{module}\")")
                 }
 
                 line("var self = prelude, outer")
@@ -108,18 +102,13 @@ class javascriptCompiler.new(outFile) {
                     line("return grace.modules[name]()")
                 }, "}")
             }, "\} else \{", {
-                if(libPath == false) then {
-                    libPath := "."
-                }
-                line("grace = require(\"{libPath}/gracelib\")")
+                line("grace = require(\"gracelib\")")
                 if(nativePrelude) then {
                     line("var _prelude = prelude = grace.prelude")
                 } else {
-                    line("prelude = require(\"{libPath}/StandardPrelude\")")
+                    line("prelude = require(\"StandardPrelude\")")
                 }
-                wrapLine("doImport = function(name) \{", {
-                    line("return require('./' + name)")
-                }, "}")
+                line("doImport = require")
                 wrapln("try \{", {
                     line("module.exports = getInstance()")
                 }, "\} catch(e) \{", {

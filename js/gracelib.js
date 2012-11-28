@@ -6,6 +6,7 @@
     var slice   = Array.prototype.slice;
     var splice  = Array.prototype.splice;
     var valueOf = global.Object.prototype.valueOf;
+    var isNode  = typeof module !== "undefined" && module.exports;
 
     // Object creator.
     function newObject() {
@@ -794,7 +795,7 @@
                     return e.value;
                 } else {
                     if (!(e instanceof Return || e instanceof AbstractError)) {
-                        e = new Error("InternalError", e.toString());
+                        e = new Error("Internal" + e.name, e.message);
                     }
 
                     if (e instanceof AbstractError) {
@@ -1051,160 +1052,6 @@
     });
 
 
-    /** Native modules in the standard library ********************************/
-
-    var io = nativeObject(function(method, getter) {
-        var fs  = require('fs');
-        var tty = require('tty');
-
-        function newFile(path, flags) {
-            path  = asString(path);
-            flags = asString(flags);
-
-            var fd   = fs.openSync(path, flags);
-            var pos  = 0;
-            var buf  = new Buffer(1);
-            var self = nativeObject(function(method) {
-                method("close", function() {
-                    fs.closeSync(fd);
-                });
-                method("write", function(data) {
-                    var buf = new Buffer(asString(data));
-                    var len = data.length;
-                    fs.writeSync(fd, buf, 0, len, pos);
-                    pos += len;
-                }, [stringType]);
-                method("getline", function() {
-                    var out = "";
-                    while (!isEof()) {
-                        fs.readSync(fd, buf, 0, 1, pos++);
-                        var char = buf.toString();
-                        if (char === "\n") {
-                            return out;
-                        }
-                        out += char;
-                    }
-
-                    return out;
-                });
-                method("read", function() {
-                    if (pos === 0) {
-                        return fs.readFileSync(path).toString();
-                    }
-
-                    var out = "";
-                    while (!isEof()) {
-                        fs.readSync(fd, buf, 0, 1, pos++);
-                        out += buf.toString();
-                    }
-
-                    return out;
-                });
-                method("readBinary", function() {
-                    fs.readSync(fd, buf, 0, 1, pos++);
-                    return buf.readUInt8(0);
-                });
-                method("writeBinary", function(bytes) {
-                    var size = asNumber(call(bytes, "size", self));
-                    var buf = new Buffer(size);
-                    calln(prelude, "for()do", self)(bytes)(function(byte) {
-                        buf.writeUInt8(byte);
-                    });
-                    if (!fs.writeSync(fd, buf, 0, size, pos++)) {
-                        throw new Error("IOError", "Failed to write to file");
-                    }
-                }, [objectType]);
-
-                function seek(by) {
-                    pos += asNumber(by).floor();
-                }
-
-                method("seek", seek, [numberType]);
-                method("seekForward", seek, [numberType]);
-                method("seekBackward", function(by) {
-                    seek(call(by, "prefix-", self));
-                }, [numberType]);
-
-                function isEof() {
-                    return !Boolean(fs.readSync(fd, buf, 0, 1, pos));
-                }
-
-                method("iter", function() {
-                    return self;
-                });
-                method("havemore", function() {
-                    return !isEof();
-                });
-                method("next", function() {
-                    fs.readSync(fd, buf, 0, 1, pos++);
-                    return buf.toString();
-                });
-
-                method("eof", function() {
-                    return isEof();
-                });
-                method("isatty", function() {
-                    return tty.isatty(fd);
-                });
-            });
-
-            return self;
-        }
-
-        var childp = require('child_process');
-
-        function newProcess() {
-            return nativeObject(function(method) {
-                method("wait");
-                method("status");
-                method("success");
-                method("terminated");
-            });
-        }
-
-        getter("input", process.stdin);
-        getter("output", process.stdout);
-        method("error", function(message) {
-            throw new Error("IOError", message);
-        }, [stringType]);
-        method("open", function(path, flags) {
-            return newFile(path, flags);
-        }, [stringType, stringType]);
-        method("system");
-        method("newer");
-        method("exists", function(path) {
-            return fs.existsSync(path);
-        }, [stringType]);
-        method("realpath");
-        method("spawn", function() {
-            return newProcess();
-        });
-        method("spawnv", function() {
-            return newProcess();
-        });
-    });
-
-    var sys = nativeObject(function(method, getter) {
-        method("argv", function() {
-            return process.argv;
-        });
-        method("cputime", function() {
-            return Date.now();
-        });
-        method("elapsed", function() {
-            return process.uptime();
-        });
-        method("exit", function(code) {
-            process.exit(code);
-        }, [numberType]);
-        getter("execPath", process.execPath);
-    });
-
-    var js = nativeObject(function(method, getter) {
-        getter("global", global);
-    });
-
-
     /** Global grace export ***************************************************/
 
     var grace = {
@@ -1258,18 +1105,14 @@
             block.pattern = pattern;
             return block;
         },
-        prelude: prelude,
-        modules: {
-            io:  io,
-            sys: sys,
-            js:  js
-        }
+        prelude: prelude
     };
 
-    if (typeof module === "undefined") {
-        global.grace = grace;
-    } else {
+    if (isNode) {
         module.exports = grace;
+    } else {
+        grace.modules = {};
+        global.grace = grace;
     }
 
 })();
