@@ -153,15 +153,14 @@ class javascriptCompiler.new(outFile) {
 
     // Compiles a class into its object representation.
     method compileClass(node) {
-        // TODO Use proper values instead of empty strings.
         def body = [ast.objectNode.new(node.value, node.superclass)]
         def constructor = ast.methodNode.new(node.constructor, node.signature,
-            body, "")
+            body, true)
         def defDec = ast.defDecNode.new(node.name,
-            ast.objectNode.new([constructor], ""), "")
+            ast.objectNode.new([constructor], true), true)
 
         // TODO This should really be pulled off of the class.
-        defDec.annotations.push(ast.identifierNode.new("readable", ""))
+        defDec.annotations.push(ast.identifierNode.new("readable", true))
 
         compileDef(defDec)
     }
@@ -396,7 +395,19 @@ class javascriptCompiler.new(outFile) {
     method compileString(node) {
         def str = node.value.replace("\\") with("\\\\")
             .replace("\"") with("\\\"").replace("\n") with("\\n")
-        write("\"{str}\"")
+            .replace("\t") with("\\t").replace("\r") with("\\r")
+            .replace("\b") with("\\b").replace("\f") with("\\f")
+            .replace("\e") with("\\e")
+
+        write("\"")
+        for(str) do { char ->
+            if (char.ord > 127) then {
+                write("\\u{char.ord}")
+            } else {
+                write(char)
+            }
+        }
+        write("\"")
     }
 
     // Compiles a Grace object into a closure that evaluates to an object.
@@ -561,6 +572,10 @@ class javascriptCompiler.new(outFile) {
     }
 
     method compileBodyWithReturn(body : List, nested : Boolean) {
+        if(body.size ==  0) then {
+            return
+        }
+
         def last = body.pop
 
         compileExecution(body)
@@ -680,7 +695,10 @@ class javascriptCompiler.new(outFile) {
 
 }
 
-def keywords = [ "with", "break", "new", "public", "private" ]
+def keywords = [
+    "with", "break", "new", "public", "private", "try", "catch", "finally",
+    "if", "else", "for", "in", "const", "function", "switch", "case", "void"
+]
 
 method escapeIdentifier(identifier : String) -> String {
     if(keywords.contains(identifier)) then {

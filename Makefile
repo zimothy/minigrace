@@ -51,7 +51,6 @@ js: js/index.html
 
 js/StandardPrelude.js: StandardPrelude.grace minigrace
 	./minigrace --verbose --target js -XNativePrelude -o js/StandardPrelude.js StandardPrelude.grace
-	echo "Grace_prelude = do_import('StandardPrelude', gracecode_StandardPrelude);" >> js/StandardPrelude.js
 
 js/%.js: %.grace minigrace
 	./minigrace --verbose --target js -o $@ $<
