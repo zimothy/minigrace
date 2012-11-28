@@ -70,8 +70,14 @@ class javascriptCompiler.new(outFile) {
 
                 // The imports need to be inside this function to allow the
                 // outer closure to run correctly.
-                for(imports) do { module ->
-                    line("var {module} = doImport(\"{module}\")")
+                for(imports) do { m ->
+                    def module = m.value
+                    if((module == "io") || (module == "sys") ||
+                            (module == "js")) then {
+                        line("var {module} = grace.modules.{module}")
+                    } else {
+                        line("var {module} = doImport(\"{module}\")")
+                    }
                 }
 
                 line("var self = prelude, outer")

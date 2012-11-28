@@ -1058,8 +1058,12 @@
         var tty = require('tty');
 
         function newFile(path, flags) {
+            path  = asString(path);
+            flags = asString(flags);
+
             var fd   = fs.openSync(path, flags);
             var pos  = 0;
+            var buf  = new Buffer(1);
             var self = nativeObject(function(method) {
                 method("close", function() {
                     fs.closeSync(fd);
@@ -1070,20 +1074,46 @@
                     fs.writeSync(fd, buf, 0, len, pos);
                     pos += len;
                 }, [stringType]);
-                method("getline");
+                method("getline", function() {
+                    var out = "";
+                    while (!isEof()) {
+                        fs.readSync(fd, buf, 0, 1, pos++);
+                        var char = buf.toString();
+                        if (char === "\n") {
+                            return out;
+                        }
+                        out += char;
+                    }
+
+                    return out;
+                });
                 method("read", function() {
-                    return fs.readFileSync(path);
+                    if (pos === 0) {
+                        return fs.readFileSync(path).toString();
+                    }
+
+                    var out = "";
+                    while (!isEof()) {
+                        fs.readSync(fd, buf, 0, 1, pos++);
+                        out += buf.toString();
+                    }
+
+                    return out;
                 });
                 method("readBinary", function() {
-                    var buf = new Buffer(1);
                     fs.readSync(fd, buf, 0, 1, pos++);
                     return buf.readUInt8(0);
                 });
-                method("writeBinary", function(byte) {
-                    var buf = new Buffer(1);
-                    buf.writeUInt8(byte);
-                    fs.writeSync(fd, buf, 0, 1, pos++);
-                });
+                method("writeBinary", function(bytes) {
+                    var size = asNumber(call(bytes, "size", self));
+                    var buf = new Buffer(size);
+                    calln(prelude, "for()do", self)(bytes)(function(byte) {
+                        buf.writeUInt8(byte);
+                    });
+                    if (!fs.writeSync(fd, buf, 0, size, pos++)) {
+                        throw new Error("IOError", "Failed to write to file");
+                    }
+                }, [objectType]);
 
                 function seek(by) {
                     pos += asNumber(by).floor();
@@ -1093,16 +1123,21 @@
                 method("seekForward", seek, [numberType]);
                 method("seekBackward", function(by) {
                     seek(call(by, "prefix-", self));
-                });
+                }, [numberType]);
+
+                function isEof() {
+                    return !Boolean(fs.readSync(fd, buf, 0, 1, pos));
+                }
 
                 method("iter", function() {
                     return self;
                 });
                 method("havemore", function() {
-                    return isEof();
+                    return !isEof();
                 });
                 method("next", function() {
-                    return call(self, "read", self);
+                    fs.readSync(fd, buf, 0, 1, pos++);
+                    return buf.toString();
                 });
 
                 method("eof", function() {
@@ -1113,7 +1148,7 @@
                 });
             });
 
-            return file;
+            return self;
         }
 
         var childp = require('child_process');
@@ -1131,15 +1166,15 @@
         getter("output", process.stdout);
         method("error", function(message) {
             throw new Error("IOError", message);
-        });
+        }, [stringType]);
         method("open", function(path, flags) {
             return newFile(path, flags);
-        });
+        }, [stringType, stringType]);
         method("system");
         method("newer");
         method("exists", function(path) {
             return fs.existsSync(path);
-        });
+        }, [stringType]);
         method("realpath");
         method("spawn", function() {
             return newProcess();
@@ -1224,10 +1259,14 @@
             return block;
         },
         prelude: prelude,
+        modules: {
+            io:  io,
+            sys: sys,
+            js:  js
+        }
     };
 
     if (typeof module === "undefined") {
-        grace.modules = {};
         global.grace = grace;
     } else {
         module.exports = grace;
