@@ -27,28 +27,66 @@
         return object;
     }
 
-    var hasOwnProperty = global.Object.prototype.hasOwnProperty;
+    var hasOP= global.Object.prototype.hasOwnProperty;
+    function hasOwnProperty(obj, name) {
+        return hasOP.call(obj, name);
+    }
 
     // Adds all the direct properties in from to object.
     function extend(object, from) {
         for (var key in from) {
-            if (hasOwnProperty.call(from, key)) {
+            if (hasOwnProperty(from, key)) {
                 object[key] = from[key];
             }
         }
         return object;
     }
 
-    // Evaluates if an object has a method publicly available.
-    function hasPublicMethod(obj, name) {
+    // A version of typeof that will return primitive types of object wrappers
+    // of primitives. It will also return "array" for Array instances.
+    function typeOf(obj) {
         var type = typeof obj;
-        if (type !== "object" || obj instanceof Array) {
-            return primitives[type][name] != null;
+
+        if (type !== "object") {
+            return typeof obj;
         }
 
-        return obj[name] != null && (obj[name].access === "public" ||
-            !(obj instanceof Object) &&
-            typeof obj[name].access === "undefined");
+        if (obj instanceof Boolean) {
+            return "boolean";
+        } else if (obj instanceof Number) {
+            return "number";
+        } else if (obj instanceof String) {
+            return "string";
+        } else if (obj instanceof Array) {
+            return "array";
+        }
+
+        return "object";
+    }
+
+    // Evaluates if an object has a method publicly available.
+    // Note that it will recognise primitive values and assert that a method
+    // exists even if it is not actually attached to the value. It will also
+    // recognise normal Javascript objects and consider any methods on them as
+    // public.
+    function hasPublicMethod(obj, name) {
+        var type = typeOf(obj);
+
+        if (type === "undefined") {
+            return name === "asDebugString";
+        }
+
+        if (hasOwnProperty(objectMethods, name)) {
+            return true;
+        }
+
+        if (type !== "object") {
+            return hasOwnProperty(primitives[type], name) ||
+                (obj[name] != null && obj[name].access === "public");
+        }
+
+        return obj[name] != null &&
+            (obj[name].access === "public" || !(obj instanceof Object));
     }
 
     // Iterator helper.
@@ -71,7 +109,7 @@
 
     // Conversion helpers.
     function asBoolean(value) {
-        if (typeof value === "boolean" || value instanceof Boolean) {
+        if (typeOf(value) === "boolean") {
             return value.valueOf();
         }
 
@@ -84,7 +122,7 @@
     }
 
     function asNumber(value) {
-        if (typeof value === "number" || value instanceof Number) {
+        if (typeOf(value) === "number") {
             return value.valueOf();
         }
 
@@ -93,7 +131,7 @@
     }
 
     function asString(value) {
-        if (typeof value === "string" || value instanceof String) {
+        if (typeOf(value) === "string") {
             return value.valueOf();
         }
 
@@ -144,13 +182,8 @@
     /** Native types **********************************************************/
 
     function typeMatch(names, obj) {
-        var test = obj, type = typeof obj;
-        if (type !== "object" || obj instanceof Array) {
-            test = primitives[type];
-        }
-
         var failed = each(names, function(i, name) {
-            if (!hasPublicMethod(test, name)) {
+            if (!hasPublicMethod(obj, name)) {
                 return failedMatch(obj);
             }
         });
@@ -265,12 +298,15 @@
     };
 
 
-    // Grace object constructor.
-    function Object() {
-        var self = this;
+    // Grace object constructor. Mostly for instanceof checks.
+    function Object() {}
+
+    var objectMethods = nativeObject(function(method) {
         // Temporary: this should be moved into the prelude.
-        defineMethod(self, "print", print, "public", [objectType]);
-        defineMethod(self, "==", function(other) {
+        method("print", function(self, obj) {
+            print(obj);
+        }, "public", [objectType, objectType]);
+        method("==", function(self, other) {
             if (self === other) {
                 return true;
             }
@@ -306,37 +342,23 @@
             }
 
             return true;
-        }, "public", [objectType]);
-        defineMethod(self, "!=", function(other) {
+        }, "public", [objectType, objectType]);
+        method("!=", function(self, other) {
             var equal = calln(self, "==", self)(other);
             return call(equal, "not", self);
-        }, "public", [objectType]);
-        defineMethod(self, "asString", function() {
+        }, "public", [objectType, objectType]);
+        method("asString", function(self) {
             return call(self, "asDebugString", self);
-        }, "public");
-        defineMethod(self, "asDebugString", function() {
+        }, "public", [objectType]);
+        method("asDebugString", function(self) {
             // TODO Actually describe the object.
             return "object {}";
-        }, "public");
-    }
+        }, "public", [objectType]);
+    });
 
     // Primitive function helper.
     function primitiveObject(func) {
         return nativeObject(function(method) {
-            method("==", function (self, other) {
-                return self === other;
-            }, [objectType, objectType]);
-            method("!=", function(self, other) {
-                var equal = calln(self, "==", self)(other);
-                return call(equal, "not", self);
-            }, [objectType, objectType]);
-            method("asString", function(self) {
-                return call(self, "asDebugString", self);
-            }, [objectType]);
-            method("asDebugString", function(self) {
-                return self.toString();
-            }, [objectType]);
-
             func(function(name) {
                 var types = arguments[2];
                 splice.call(types || arguments, types ? 0 : 2, 0, objectType);
@@ -565,7 +587,7 @@
             method("pattern", function() {});
         }),
         // The only primitive object in this system is the array.
-        object: primitiveObject(function(method) {
+        array: primitiveObject(function(method) {
             method("==", function(self, other) {
                 if (!asBoolean(listType.match(other))) {
                     return false;
@@ -646,7 +668,7 @@
     };
 
     primitives.string['[]'] = primitives.string.at;
-    primitives.object['[]'] = primitives.object.at;
+    primitives.array['[]'] = primitives.array.at;
 
 
     // Grace type.
@@ -838,6 +860,10 @@
         object[name] = signature;
     }
 
+    function doneAsDebugString() {
+        return "done";
+    }
+
     function call() {
         return calln.apply(this, arguments)();
     }
@@ -848,60 +874,70 @@
     }
 
     function callWith(object, name, context, line) {
-        var type = typeof object;
+        var type = typeOf(object);
 
-        if (typeof object[name] !== "function" || type !== "object" ||
-                object instanceof Array && object[name].access == null) {
-
-            if (object instanceof Boolean) {
-                type = "boolean";
-            } else if (object instanceof Number) {
-                type = "number";
-            } else if (object instanceof String) {
-                type = "string";
-            } else if (object instanceof Function) {
-                type = "function";
+        if (type === "undefined") {
+            if (name === "asDebugString") {
+                return doneAsDebugString;
             }
 
-            if (type !== "object" || object instanceof Array) {
-                if (type === "undefined") {
-                    var ex = new Error("DoneError",
-                        "Cannot perform action on done");
-                    ex.stack.push(line);
-                    throw ex;
-                }
-
-                if (primitives[type][name] == null) {
-                    var ex = new Error("NoSuchMethodError",
-                        "No such method " + name);
-                    ex.stack.push(line);
-                    throw ex;
-                }
-
-                var method = primitives[type][name];
-
-                return function() {
-                    splice.call(arguments, 0, 0, object);
-                    return method.apply(null, arguments);
-                };
-            }
-
-            var ex = new Error("NoSuchMethodError",
-                "No such method " + name);
+            var ex = new Error("DoneError",
+                "Cannot perform action on done");
             ex.stack.push(line);
             throw ex;
         }
 
-        var method = object[name];
-
-        if (!hasPublicMethod(object, name) && context !== object) {
-            var ex = new Error("MethodAccessError",
-                "Improper access to confidential method " + name);
-            ex.stack.push(line);
-            throw ex;
+        if (!hasPublicMethod(object, name)) {
+            if (object[name] != null) {
+                if (context !== object) {
+                    var access = object[name].access || "confidential";
+                    var ex = new Error("MethodAccessError",
+                        "Improper access to " + access + "method " + name);
+                    ex.stack.push(line);
+                    throw ex;
+                }
+            } else {
+                var ex = new Error("NoSuchMethodError",
+                    "No such method " + name);
+                ex.stack.push(line);
+                throw ex;
+            }
         }
 
-        return method;
+        // Native Javascript setter.
+        if (!(object instanceof Object) && object[name] == null &&
+                name.substring(name.length - 2) === ":=") {
+            var pname = name.substring(0, name.length - 2);
+            if ((/^[A-z\d']+$/).test(name.substring(0, name.length - 2))) {
+                return function(value) {
+                    object[pname] = value;
+                }
+            }
+        }
+
+        if (type !== "object" &&
+                (object[name] == null || object[name].access == null) ||
+                typeof object[name] === "undefined") {
+            var prim = primitives[type];
+            var method = prim && hasOwnProperty(prim, name) ? prim[name] :
+                objectMethods[name];
+
+            return function() {
+                splice.call(arguments, 0, 0, object);
+                return method.apply(null, arguments);
+            };
+        }
+
+        // Native Javascript getter.
+        if (!(object instanceof Object) &&
+                typeof object[name] !== "function") {
+            return function() {
+                return typeof object[name] === "undefined" ? null :
+                    object[name];
+            }
+        }
+
+        return object[name];
     }
 
 
