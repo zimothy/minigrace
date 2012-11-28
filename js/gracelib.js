@@ -22,7 +22,7 @@
         }, function(name, value) {
             defineMethod(object, name, function() {
                 return value;
-            }, "public", "getter");
+            }, "public", "def");
         });
         return object;
     }
@@ -309,6 +309,11 @@
         method("==", function(self, other) {
             if (self === other) {
                 return true;
+            }
+
+            // Normal Javascript objects cannot be egal to anything.
+            if (!(self instanceof Object && other instanceof Object)) {
+                return false;
             }
 
             // Shoddy implementation of egal.
@@ -1191,7 +1196,7 @@
             function Outer() {
                 defineMethod(self, "outer", function() {
                     return outer;
-                }, "public", "getter");
+                }, "public", "def");
             }
             Outer.prototype = self;
 
