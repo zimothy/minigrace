@@ -943,7 +943,7 @@
 
             return function() {
                 splice.call(arguments, 0, 0, object);
-                return method.apply(self, arguments);
+                return method.apply(object, arguments);
             };
         }
 
