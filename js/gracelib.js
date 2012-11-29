@@ -28,7 +28,7 @@
         return object;
     }
 
-    var hasOP= global.Object.prototype.hasOwnProperty;
+    var hasOP = global.Object.prototype.hasOwnProperty;
     function hasOwnProperty(obj, name) {
         return hasOP.call(obj, name);
     }
@@ -86,8 +86,12 @@
                 (obj[name] != null && obj[name].access === "public");
         }
 
-        return obj[name] != null &&
-            (obj[name].access === "public" || !(obj instanceof Object));
+        if (!(obj instanceof Object)) {
+            return typeof obj[name] !== "undefined" || name === "[]" ||
+                name === "[]:=" || (/^[A-z\d']+:=$/).test(name);
+        }
+
+        return obj[name] != null && obj[name].access === "public";
     }
 
     // Iterator helper.
@@ -127,7 +131,7 @@
             return value.valueOf();
         }
 
-        throw new Error("NativeTypeError",
+        throw error.refine("NativeTypeError").raise(
             "Cannot retrieve native number");
     }
 
@@ -143,7 +147,7 @@
             return string;
         }
 
-        throw new Error("NativeTypeError",
+        throw error.refine("NativeTypeError").raise(
             "Cannot retrieve native string");
     }
 
@@ -154,7 +158,7 @@
 
         if (!(hasPublicMethod(value, "size") &&
                 hasPublicMethod(value, "at"))) {
-            throw new Error("NativeTypeError",
+            throw error.refine("NativeTypeError").raise(
                 "Cannot retrieve native list");
         }
 
@@ -301,6 +305,10 @@
 
     // Grace object constructor. Mostly for instanceof checks.
     function Object() {}
+
+    Object.prototype.toString = function() {
+        return call(this, "asString", this);
+    }
 
     var objectMethods = nativeObject(function(method) {
         // Temporary: this should be moved into the prelude.
@@ -578,7 +586,7 @@
         }),
         'function': primitiveObject(function(method) {
             method("apply", function(self, args) {
-                if (asNumber(args.length) < self.length) {
+                if (self.type && asNumber(args.length) < self.type.length) {
                     throw "Incorrect number of arguments."
                 }
                 return self.apply(null, args);
@@ -696,39 +704,17 @@
 
 
     // Grace exceptions.
-    function AbstractError(name, message) {
-        this.stack = [];
-        extend(this, nativeObject(function(method) {
-            method("name", function() {
-                return name;
-            });
-            method("message", function() {
-                return message;
-            });
-            method("asString", function() {
-                return name + ": " + message;
-            });
-        }));
-    }
-
-    AbstractError.prototype = new Object();
-
-    function Error(name, message) {
-        AbstractError.call(this, name, message);
-    }
-
-    Error.prototype = new AbstractError();
-
-    var errorMatch = nativeObject(function (method) {
-        method("match", function(value) {
-            return value instanceof Error ? successfulMatch(value) :
-                failedMatch(value);
-        }, [objectType]);
-    });
-
     function newExceptionFactory(name, Extend) {
         function Exception(message) {
-            AbstractError.call(this, name, message);
+            defineMethod(this, "name", function() {
+                return name;
+            }, "public", "def");
+            defineMethod(this, "message", function() {
+                return message;
+            }, "public", "def");
+            defineMethod(this, "asString", function() {
+                return name + ": " + message;
+            }, "public");
         }
 
         Exception.prototype = new Extend();
@@ -741,7 +727,7 @@
                 throw new Exception(message);
             }, [stringType]);
             method("refine", function(name) {
-                return extend(newExceptionFactory(name, Exception), self);
+                return newExceptionFactory(name, Exception);
             }, [stringType]);
             method("asString", function() {
                 return name;
@@ -753,6 +739,11 @@
         });
         return self;
     }
+
+    function Exception() {}
+    Exception.prototype = new Object();
+    var exception = newExceptionFactory("Exception", Exception);
+    var error = exception.refine("Error");
 
 
     // Return jump wrapper.
@@ -794,12 +785,14 @@
                 if (e instanceof LocalReturn) {
                     return e.value;
                 } else {
-                    if (!(e instanceof Return || e instanceof AbstractError)) {
-                        e = new Error("Internal" + e.name, e.message);
-                    }
-
-                    if (e instanceof AbstractError) {
-                        //e.stack.push(line);
+                    if (!(e instanceof Return || e instanceof Exception)) {
+                        if (e instanceof Error) {
+                            e = error.refine("Internal" + e.name)
+                                .raise(e.message);
+                        } else {
+                            e = error.refine("InternalError")
+                                .raise(e.toString());
+                        }
                     }
 
                     throw e;
@@ -834,7 +827,7 @@
                 if (arguments.length < length) {
                     // TODO A more detailed explanation of what went wrong here
                     // would probably be a good idea.
-                    var e = new Error("ArgumentError",
+                    var e = error.refine("ArgumentError").raise(
                         "Incorrect number of arguments for method " + name);
                     throw e;
                 }
@@ -887,7 +880,7 @@
                 return doneAsDebugString;
             }
 
-            var ex = new Error("DoneError",
+            var ex = error.refine("DoneError").raise(
                 "Cannot perform action on done");
             ex.stack.push(line);
             throw ex;
@@ -897,13 +890,13 @@
             if (object[name] != null) {
                 if (context !== object) {
                     var access = object[name].access || "confidential";
-                    var ex = new Error("MethodAccessError",
-                        "Improper access to " + access + "method " + name);
+                    var ex = error.refine("MethodAccessError").raise(
+                        "Improper access to " + access + " method " + name);
                     ex.stack.push(line);
                     throw ex;
                 }
             } else {
-                var ex = new Error("NoSuchMethodError",
+                var ex = error.refine("NoSuchMethodError").raise(
                     "No such method " + name);
                 ex.stack.push(line);
                 throw ex;
@@ -911,13 +904,33 @@
         }
 
         // Native Javascript setter.
-        if (!(object instanceof Object) && object[name] == null &&
-                name.substring(name.length - 2) === ":=") {
-            var pname = name.substring(0, name.length - 2);
-            if ((/^[A-z\d']+$/).test(name.substring(0, name.length - 2))) {
-                return function(value) {
-                    object[pname] = value;
+        if (!(object instanceof Object) && object[name] == null) {
+            if (name === "[]:=") {
+                return function(name, value) {
+                    object[name] = value;
                 }
+            }
+
+            if ((/^[A-z\d']+:=$/).test(name)) {
+                return function(value) {
+                    object[name.substring(0, name.length - 2)] = value;
+                }
+            }
+        }
+
+        // Native Javascript getter.
+        if (type === "object" && !(object instanceof Object) &&
+                typeof object[name] !== "function") {
+            if (name === "[]") {
+                return function(pname) {
+                    return typeof object[pname] === "undefined" ? null :
+                        object[pname];
+                }
+            }
+
+            return function() {
+                return typeof object[name] === "undefined" ? null :
+                    object[name];
             }
         }
 
@@ -930,20 +943,18 @@
 
             return function() {
                 splice.call(arguments, 0, 0, object);
-                return method.apply(null, arguments);
+                return method.apply(self, arguments);
             };
         }
 
-        // Native Javascript getter.
-        if (!(object instanceof Object) &&
-                typeof object[name] !== "function") {
+        var method = object[name];
+        if (object instanceof Object) {
+            return method;
+        } else {
             return function() {
-                return typeof object[name] === "undefined" ? null :
-                    object[name];
+                return method.apply(object, arguments);
             }
         }
-
-        return object[name];
     }
 
 
@@ -1024,8 +1035,31 @@
             }
         }, [blockType], varargs(blockType), [blockType]);
 
-        getter("Error", errorMatch);
-        getter("Exception", newExceptionFactory("Exception", AbstractError));
+        getter("Error", error);
+        getter("Exception", exception);
+
+        getter("PrimitiveArray", nativeObject(function(method) {
+            method("new", function(size) {
+                return nativeObject(function(method, getter) {
+                    var array = new Array(asNumber(size));
+                    getter("size", size);
+                    method("at", function(i) {
+                        return array[i - 1];
+                    }, [numberType]);
+                    method("at()put", function(i, value) {
+                        array[i - 1] = value;
+                    }, [numberType], [objectType]);
+                });
+            }, [numberType]);
+        }));
+
+        method("HashMap", function() {
+            if (isNode) {
+                return require("mgcollections").map();
+            } else {
+                return grace.modules.mgcollections().map();
+            }
+        });
 
         function convertType(type) {
             if (type.names) {
@@ -1065,7 +1099,8 @@
             } else {
                 var type = typeof inherits;
                 if (type === "undefined") {
-                    throw new Error("DoneError", "Cannot extend done.");
+                    throw error.refine("DoneError").raise(
+                        "Cannot extend done.");
                 }
 
                 if (type !== "object" || type !== "function") {
@@ -1096,7 +1131,7 @@
             var block = function(arg) {
                 var result = calln(block, "match", block)(arg);
                 if (!asBoolean(result)) {
-                    throw new Error("MatchError",
+                    throw error.refine("MatchError").raise(
                         "Applied non-matching value to pattern block.")
                 }
 

@@ -1,8 +1,8 @@
-def ast     = platform.ast
-def sys     = platform.sys
-def unicode = platform.unicode
-def util    = platform.util
-def utils   = platform.utils
+import ast
+import sys
+import unicode
+import util
+import utils
 
 // The name for this is prone to change, so it makes sense to centralize it.
 def unitValue = "prelude.done()"
@@ -39,6 +39,7 @@ class javascriptCompiler.new(outFile) {
             libPath : String) is public {
 
         def nativePrelude = util.extensions.contains("NativePrelude")
+        def noMain = util.extensions.contains("NoMain")
 
         // Modules get placed into a global object called grace. This code will
         // create the object if it does not exist, then add the module to it.
@@ -98,9 +99,19 @@ class javascriptCompiler.new(outFile) {
                     line("prelude = grace.modules.StandardPrelude()")
                 }
                 line("grace.modules[\"{name}\"] = getInstance")
+                // TODO Temporary, until the module system settles down.
+                line("getInstance.reload = function() \{ instance = null; };")
+                line("getInstance.reload.access = \"public\"")
                 wrapLine("doImport = function(name) \{", {
                     line("return grace.modules[name]()")
                 }, "}")
+                if(noMain.not) then {
+                    wrapln("try \{", {
+                        line("getInstance()")
+                    }, "\} catch(e) \{", {
+                        line("console.error(e)")
+                    }, "}")
+                }
             }, "\} else \{", {
                 line("grace = require(\"gracelib\")")
                 if(nativePrelude) then {
@@ -112,7 +123,7 @@ class javascriptCompiler.new(outFile) {
                 wrapln("try \{", {
                     line("module.exports = getInstance()")
                 }, "\} catch(e) \{", {
-                    line("console.error(e.asString())")
+                    line("console.error(e)")
                 }, "\}")
             }, "\}")
 
@@ -374,7 +385,7 @@ class javascriptCompiler.new(outFile) {
         }
     }
 
-    def preludes = ["Boolean", "Number", "String"]
+    def preludes = ["Boolean", "Number", "String", "List", "HashMap"]
 
     method compileIdentifier(node) {
         def value = node.value
@@ -487,7 +498,9 @@ class javascriptCompiler.new(outFile) {
         def name = node.value.value
 
         write("$call(")
-        compileExpression(node.value.in)
+        match(node.value.kind)
+            case { "identifier" -> compileExpression(node.value) }
+            case { "member" -> compileExpression(node.value.in) }
         write(", \"{name}\", self, {node.line})(")
 
         for(node.with) do { part ->

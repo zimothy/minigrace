@@ -1,14 +1,29 @@
-module.exports = nativeObject(function(method, getter) {
-    getter("global", global);
+(function() {
+    var global = this, grace, instance, prelude;
+    function makeModule() {
+        var object = grace.object, method = grace.method,
+            varargs = grace.varargs;
+        return object(prelude, null, function(self) {
+            method(self, "global", function() {
+                return global;
+            }, "public", "def");
 
-    method("call()with", function(name, args) {
-        return global[name].apply(null, args);
-    }, [stringType], varargs(objectType));
-
-    // Intended for accessing methods as Javascript functions.
-    // Note that it also works on normal Grace objects.
-    method("getFrom()property", function(object, name) {
-        return object[name];
-    }, [objectType], [stringType]);
-});
+            method(self, "call()with", function(name, args) {
+                return global[name].apply(null, args);
+            }, "public", [prelude.String()], varargs(prelude.Object()));
+        });
+    }
+    function getInstance() {
+        return instance ? instance : instance = makeModule();
+    }
+    if (typeof module === "undefined") {
+        grace = this.grace;
+        prelude = grace.prelude;
+        grace.modules.js = getInstance;
+    } else {
+        grace = require("gracelib");
+        prelude = require("StandardPrelude");
+        module.exports = getInstance();
+    }
+})();
 
