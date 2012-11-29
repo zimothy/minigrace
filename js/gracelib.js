@@ -71,6 +71,10 @@
     // recognise normal Javascript objects and consider any methods on them as
     // public.
     function hasPublicMethod(obj, name) {
+        if (obj === null) {
+            return false;
+        }
+
         var type = typeOf(obj);
 
         if (type === "undefined") {
@@ -131,8 +135,7 @@
             return value.valueOf();
         }
 
-        throw error.refine("NativeTypeError").raise(
-            "Cannot retrieve native number");
+        throw nativeTypeError.raise("Cannot retrieve native number");
     }
 
     function asString(value) {
@@ -147,8 +150,7 @@
             return string;
         }
 
-        throw error.refine("NativeTypeError").raise(
-            "Cannot retrieve native string");
+        throw nativeTypeError.raise("Cannot retrieve native string");
     }
 
     function asArray(value) {
@@ -158,8 +160,7 @@
 
         if (!(hasPublicMethod(value, "size") &&
                 hasPublicMethod(value, "at"))) {
-            throw error.refine("NativeTypeError").raise(
-                "Cannot retrieve native list");
+            throw nativeTypeError.raise("Cannot retrieve native list");
         }
 
         var i = 0, length = call(value, "size");
@@ -187,6 +188,10 @@
     /** Native types **********************************************************/
 
     function typeMatch(names, obj) {
+        if (obj === null) {
+            return failedMatch(obj);
+        }
+
         var failed = each(names, function(i, name) {
             if (!hasPublicMethod(obj, name)) {
                 return failedMatch(obj);
@@ -706,13 +711,18 @@
     // Grace exceptions.
     function newExceptionFactory(name, Extend) {
         function Exception(message) {
-            defineMethod(this, "name", function() {
+            var self = this;
+            this.stack = [];
+            defineMethod(self, "name", function() {
                 return name;
             }, "public", "def");
-            defineMethod(this, "message", function() {
+            defineMethod(self, "message", function() {
                 return message;
             }, "public", "def");
-            defineMethod(this, "asString", function() {
+            defineMethod(self, "raise", function() {
+                throw self;
+            });
+            defineMethod(self, "asString", function() {
                 return name + ": " + message;
             }, "public");
         }
@@ -737,13 +747,29 @@
                     failedMatch(value);
             }, [objectType]);
         });
+        defineMethod(self, "raise()onLine", function(message, line) {
+            var e = new Exception(message);
+            e.stack.push(line);
+            throw e;
+        }, "confidential", [stringType]);
         return self;
     }
 
     function Exception() {}
     Exception.prototype = new Object();
+
     var exception = newExceptionFactory("Exception", Exception);
     var error = exception.refine("Error");
+
+    var nothingError = error.refine("NothingError");
+    var doneError = error.refine("DoneError");
+
+    var internalError = error.refine("InternalError");
+    var nativeTypeError = error.refine("NativeTypeError");
+
+    var argumentError = error.refine("ArgumentError");
+    var methodAccessError = error.refine("MethodAccessError");
+    var noSuchMethodError = error.refine("NoSuchMethodError");
 
 
     // Return jump wrapper.
@@ -787,11 +813,10 @@
                 } else {
                     if (!(e instanceof Return || e instanceof Exception)) {
                         if (e instanceof Error) {
-                            e = error.refine("Internal" + e.name)
+                            internalError.refine("Internal" + e.name)
                                 .raise(e.message);
                         } else {
-                            e = error.refine("InternalError")
-                                .raise(e.toString());
+                            internalError.raise(e.toString());
                         }
                     }
 
@@ -827,9 +852,8 @@
                 if (arguments.length < length) {
                     // TODO A more detailed explanation of what went wrong here
                     // would probably be a good idea.
-                    var e = error.refine("ArgumentError").raise(
+                    argumentError.raise(
                         "Incorrect number of arguments for method " + name);
-                    throw e;
                 }
 
                 var argList = slice.call(arguments, 0, length);
@@ -873,31 +897,28 @@
     }
 
     function callWith(object, name, context, line) {
+        if (object === null) {
+            calln(nothingError, "raise()onLine", prelude)
+                ("Cannot call method on nothing")(line);
+        }
+
         var type = typeOf(object);
 
-        if (type === "undefined") {
-            if (name === "asDebugString") {
-                return doneAsDebugString;
-            }
-
-            var ex = error.refine("DoneError").raise(
-                "Cannot perform action on done");
-            ex.stack.push(line);
-            throw ex;
+        if (type === "undefined" && name === "asDebugString") {
+            return doneAsDebugString;
         }
 
         if (!hasPublicMethod(object, name)) {
-            if (object[name] != null) {
+            if (object != null && object[name] != null) {
                 if (context !== object) {
                     var access = object[name].access || "confidential";
-                    var ex = error.refine("MethodAccessError").raise(
-                        "Improper access to " + access + " method " + name);
-                    ex.stack.push(line);
-                    throw ex;
+                    calln(methodAccessError, "raise()onLine", prelude)
+                        ("Improper access to " + access + " method " + name)
+                        (line);
                 }
             } else {
-                var ex = error.refine("NoSuchMethodError").raise(
-                    "No such method " + name);
+                var ex = calln(noSuchMethodError, "raise()onLine", prelude)
+                    ("No such method " + name)(line);
                 ex.stack.push(line);
                 throw ex;
             }
@@ -1038,6 +1059,16 @@
         getter("Error", error);
         getter("Exception", exception);
 
+        getter("NothingError", nothingError);
+        getter("DoneError", doneError);
+
+        getter("InternalError", internalError);
+        getter("NativeTypeError", nativeTypeError);
+
+        getter("ArgumentError", nativeTypeError);
+        getter("MethodAccessError", methodAccessError);
+        getter("NoSuchMethodError", noSuchMethodError);
+
         getter("PrimitiveArray", nativeObject(function(method) {
             method("new", function(size) {
                 return nativeObject(function(method, getter) {
@@ -1097,10 +1128,14 @@
             if (arguments.length === 3) {
                 obj = new Object();
             } else {
+                if (inherits === null) {
+                    nothingError.raise("Cannot extend nothing.");
+                }
+
                 var type = typeof inherits;
+
                 if (type === "undefined") {
-                    throw error.refine("DoneError").raise(
-                        "Cannot extend done.");
+                    doneError.raise("Cannot extend done.");
                 }
 
                 if (type !== "object" || type !== "function") {
@@ -1131,8 +1166,8 @@
             var block = function(arg) {
                 var result = calln(block, "match", block)(arg);
                 if (!asBoolean(result)) {
-                    throw error.refine("MatchError").raise(
-                        "Applied non-matching value to pattern block.")
+                    matchError
+                        .raise("Applied non-matching value to pattern block.")
                 }
 
                 return func.apply(null, call(result, "bindings", block));
