@@ -8,8 +8,7 @@ import utils
 def unitValue = "prelude.done()"
 
 // Native operations.
-def nativeOps =
-    ["method", "call", "object", "type", "varargs", "match", "pattern"]
+def nativeOps = ["method", "object", "type", "varargs", "match", "pattern"]
 
 // Compiles the given nodes into a module with the given name.
 method compile(nodes : List, outFile, moduleName : String, runMode : String,
@@ -50,11 +49,12 @@ class javascriptCompiler.new(outFile) {
             wrapln("function makeModule(done) \{", {
 
                 write("{indent}var ")
+
                 for(nativeOps) do { op ->
                     write("${op} = grace.{op}, ")
                 }
 
-                wrap("$src = [", {
+                wrap("$call = grace.call(", {
                     for(util.cLines) do { srcLine ->
                         write("{indent}\"")
                         for(srcLine) do { char ->
@@ -66,7 +66,7 @@ class javascriptCompiler.new(outFile) {
                         }
                     } separatedBy("\",\n")
                     write("\"\n")
-                }, "];\n")
+                }, ");\n")
 
                 // The imports need to be inside this function to allow the
                 // outer closure to run correctly.
@@ -109,7 +109,7 @@ class javascriptCompiler.new(outFile) {
                     wrapln("try \{", {
                         line("getInstance()")
                     }, "\} catch(e) \{", {
-                        line("console.error(e)")
+                        line("console.error(e.stackTrace())")
                     }, "}")
                 }
             }, "\} else \{", {

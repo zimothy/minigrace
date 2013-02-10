@@ -40,7 +40,7 @@ method compile {
 
     compiler.reload
     catch {
-        compiler.apply
+        //compiler.apply
     } case { e : Exception ->
         print(e)
     }
@@ -51,4 +51,6 @@ method run {
 }
 
 method loadTestCase {}
+
+Exception.raise("Nope")
 

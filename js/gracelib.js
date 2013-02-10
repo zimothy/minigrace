@@ -102,7 +102,7 @@
     function each(list, callback) {
         var i, length, result;
 
-        for(i = 0, length = list.length; i < length; i++) {
+        for (i = 0, length = list.length; i < length; i++) {
             result = callback(i, list[i]);
             if (typeof result !== "undefined") {
                 return result;
@@ -135,12 +135,16 @@
             return value.valueOf();
         }
 
-        throw nativeTypeError.raise("Cannot retrieve native number");
+        nativeTypeError.raise("Cannot retrieve native number");
     }
 
     function asString(value) {
         if (typeOf(value) === "string") {
             return value.valueOf();
+        }
+
+        if (!(value instanceof Object)) {
+            return value.toString();
         }
 
         var string = hasPublicMethod(value, "asString") ?
@@ -150,7 +154,7 @@
             return string;
         }
 
-        throw nativeTypeError.raise("Cannot retrieve native string");
+        nativeTypeError.raise("Cannot retrieve native string");
     }
 
     function asArray(value) {
@@ -160,14 +164,14 @@
 
         if (!(hasPublicMethod(value, "size") &&
                 hasPublicMethod(value, "at"))) {
-            throw nativeTypeError.raise("Cannot retrieve native list");
+            nativeTypeError.raise("Cannot retrieve native list");
         }
 
         var i = 0, length = call(value, "size");
         var result = [];
 
         while (i < length) {
-            result.push(callWith(value, "at", value)(i));
+            result.push(calln(value, "at", value)(i));
         }
 
         return result;
@@ -176,12 +180,12 @@
     // Late-bound matchers.
     function successfulMatch(result) {
         var sm = call(prelude, "SuccessfulMatch");
-        return callWith(sm, "new")(result, []);
+        return calln(sm, "new")(result, []);
     }
 
     function failedMatch(result) {
         var fm = call(prelude, "FailedMatch");
-        return callWith(fm, "new")(result);
+        return calln(fm, "new")(result);
     }
 
 
@@ -427,7 +431,7 @@
                 return self.toString();
             });
             method("match", function(self, other) {
-                var eq = callWith(self, "==", self)(other);
+                var eq = calln(self, "==", self)(other);
                 return eq ? successfulMatch(other) : failedMatch(other);
             }, [objectType]);
         }),
@@ -592,7 +596,7 @@
         'function': primitiveObject(function(method) {
             method("apply", function(self, args) {
                 if (self.type && asNumber(args.length) < self.type.length) {
-                    throw "Incorrect number of arguments."
+                    argumentError.raise("Incorrect number of arguments");
                 }
                 return self.apply(null, args);
             }, varargs(objectType));
@@ -619,7 +623,7 @@
                 }
 
                 return !each(self, function(i) {
-                    if (asBoolean(callWith(self[i], "==", self)(other[i]))) {
+                    if (asBoolean(calln(self[i], "==", self)(other[i]))) {
                         return true;
                     }
                 });
@@ -638,7 +642,7 @@
             }, [numberType], [objectType]);
             method("contains", function(self, value) {
                 each(self, function(i, el) {
-                    if (asBoolean(callWith(el, "==", self)(value))) {
+                    if (asBoolean(calln(el, "==", self)(value))) {
                         return true;
                     }
                 }) || false;
@@ -725,23 +729,30 @@
             defineMethod(self, "asString", function() {
                 return name + ": " + message;
             }, "public");
+            defineMethod(self, "stackTrace", function() {
+                var out = "";
+                each(self.stack, function(i, line) {
+                    if (line.number) {
+                        out += line.number + ": " + line.content;
+                    } else {
+                        out += line.content;
+                    }
+                });
+                return out;
+            }, "public");
         }
 
         Exception.prototype = new Extend();
 
-        var self = nativeObject(function(method) {
-            method("name", function() {
-                return name;
-            });
+        var self = nativeObject(function(method, getter) {
+            getter("name", name);
             method("raise", function(message) {
                 throw new Exception(message);
             }, [stringType]);
             method("refine", function(name) {
                 return newExceptionFactory(name, Exception);
             }, [stringType]);
-            method("asString", function() {
-                return name;
-            });
+            getter("asString", name);
             method("match", function(value) {
                 return value instanceof Exception ? successfulMatch(value) :
                     failedMatch(value);
@@ -891,89 +902,95 @@
         return calln.apply(this, arguments)();
     }
 
-    function calln() {
-        arguments[3] = '<native>';
-        return callWith.apply(this, arguments);
-    }
+    var calln = makeCallWith();
 
-    function callWith(object, name, context, line) {
-        if (object === null) {
-            calln(nothingError, "raise()onLine", prelude)
-                ("Cannot call method on nothing")(line);
+    function makeCallWith() {
+
+        var src = arguments;
+        var Line = src.length > 0 ? function(number) {
+            this.number = number;
+            this.content = src[number];
+        } : function() {
+            this.content = "<native>";
         }
 
-        var type = typeOf(object);
+        return function(object, name, context, line) {
+            if (object === null) {
+                calln(nothingError, "raise()onLine", prelude)
+                    ("Cannot call method on nothing")(new Line(line));
+            }
 
-        if (type === "undefined" && name === "asDebugString") {
-            return doneAsDebugString;
-        }
+            var type = typeOf(object);
 
-        if (!hasPublicMethod(object, name)) {
-            if (object != null && object[name] != null) {
-                if (context !== object) {
-                    var access = object[name].access || "confidential";
-                    calln(methodAccessError, "raise()onLine", prelude)
-                        ("Improper access to " + access + " method " + name)
-                        (line);
+            if (type === "undefined" && name === "asDebugString") {
+                return doneAsDebugString;
+            }
+
+            if (!hasPublicMethod(object, name)) {
+                if (object != null && object[name] != null) {
+                    if (context !== object) {
+                        var access = object[name].access || "confidential";
+                        calln(methodAccessError, "raise()onLine", prelude)
+                            ("Improper access to " + access + " method " + name)
+                            (new Line(line));
+                    }
+                } else {
+                    var ex = calln(noSuchMethodError, "raise()onLine", prelude)
+                        ("No such method " + name)(new Line(line));
                 }
+            }
+
+            // Native Javascript setter.
+            if (!(object instanceof Object) && object[name] == null) {
+                if (name === "[]:=") {
+                    return function(name, value) {
+                        object[name] = value;
+                    }
+                }
+
+                if ((/^[A-z\d']+:=$/).test(name)) {
+                    return function(value) {
+                        object[name.substring(0, name.length - 2)] = value;
+                    }
+                }
+            }
+
+            // Native Javascript getter.
+            if (type === "object" && !(object instanceof Object) &&
+                    typeof object[name] !== "function") {
+                if (name === "[]") {
+                    return function(pname) {
+                        return typeof object[pname] === "undefined" ? null :
+                            object[pname];
+                    }
+                }
+
+                return function() {
+                    return typeof object[name] === "undefined" ? null :
+                        object[name];
+                }
+            }
+
+            if (type !== "object" &&
+                    (object[name] == null || object[name].access == null) ||
+                    typeof object[name] === "undefined") {
+                var prim = primitives[type];
+                var method = prim && hasOwnProperty(prim, name) ? prim[name] :
+                    objectMethods[name];
+
+                return function() {
+                    splice.call(arguments, 0, 0, object);
+                    return method.apply(object, arguments);
+                };
+            }
+
+            var method = object[name];
+            if (object instanceof Object) {
+                return method;
             } else {
-                var ex = calln(noSuchMethodError, "raise()onLine", prelude)
-                    ("No such method " + name)(line);
-                ex.stack.push(line);
-                throw ex;
-            }
-        }
-
-        // Native Javascript setter.
-        if (!(object instanceof Object) && object[name] == null) {
-            if (name === "[]:=") {
-                return function(name, value) {
-                    object[name] = value;
+                return function() {
+                    return method.apply(object, arguments);
                 }
-            }
-
-            if ((/^[A-z\d']+:=$/).test(name)) {
-                return function(value) {
-                    object[name.substring(0, name.length - 2)] = value;
-                }
-            }
-        }
-
-        // Native Javascript getter.
-        if (type === "object" && !(object instanceof Object) &&
-                typeof object[name] !== "function") {
-            if (name === "[]") {
-                return function(pname) {
-                    return typeof object[pname] === "undefined" ? null :
-                        object[pname];
-                }
-            }
-
-            return function() {
-                return typeof object[name] === "undefined" ? null :
-                    object[name];
-            }
-        }
-
-        if (type !== "object" &&
-                (object[name] == null || object[name].access == null) ||
-                typeof object[name] === "undefined") {
-            var prim = primitives[type];
-            var method = prim && hasOwnProperty(prim, name) ? prim[name] :
-                objectMethods[name];
-
-            return function() {
-                splice.call(arguments, 0, 0, object);
-                return method.apply(object, arguments);
-            };
-        }
-
-        var method = object[name];
-        if (object instanceof Object) {
-            return method;
-        } else {
-            return function() {
-                return method.apply(object, arguments);
             }
         }
     }
@@ -1002,7 +1019,7 @@
         method("for()do", function(iterable, block) {
             var iterator = call(iterable, "iter");
             while (asBoolean(call(iterator, "havemore"))) {
-                callWith(block, "apply", prelude)(
+                calln(block, "apply", prelude)(
                     call(iterator, "next", prelude));
             }
         }, [iterableType], [blockType]);
@@ -1121,7 +1138,7 @@
 
     var grace = {
         method:  defineMethod,
-        call:    callWith,
+        call:    makeCallWith,
         object:  function(self, outer, func, inherits) {
             var obj;
 
