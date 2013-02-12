@@ -1,11 +1,13 @@
 #pragma DefaultVisibility=public
-import io
-import sys
-import ast
-import util
-import buildinfo
-import subtype
-import mgcollections
+def io = platform.io
+def sys = platform.sys
+def ast = platform.ast
+def util = platform.util
+def buildinfo = platform.buildinfo
+def subtype = platform.subtype
+def mgcollections = platform.mgcollections
+import "xmodule" as xmodule
+import "mirrors" as mirrors
 
 def collections = mgcollections
 
@@ -28,6 +30,7 @@ var bblock := "entry"
 var linenum := 1
 var modules := collections.set.new
 var staticmodules := collections.set.new
+def importnames = collections.map.new
 var values := []
 var outfile
 var modname := "main"
@@ -43,6 +46,7 @@ var topOutput := []
 var bottomOutput := output
 var compilationDepth := 0
 def topLevelTypes = HashMap.new
+var importHook := false
 
 method out(s) {
     output.push(s)
@@ -210,11 +214,17 @@ method compileobjdefdecdata(o, selfr, pos) {
         if (o.value.kind == "object") then {
             compileobject(o.value, selfr)
             val := o.value.register
+        } elseif (o.value.kind == "class") then {
+            compileclass(o.value, false)
+            val := o.value.register
         } else {
             val := compilenode(o.value)
         }
     }
     out("  adddatum2({selfr}, {val}, {pos});")
+    if (ast.findAnnotation(o, "parent")) then {
+        out("  ((struct UserObject *){selfr})->super = {val};")
+    }
 }
 method compileobjdefdecmeth(o, selfr, pos) {
     var myc := auto_count
@@ -351,7 +361,7 @@ method compileobjvardec(o, selfr, pos) {
     outprint("\}")
     out("  addmethodreal({selfr}, \"{enm}:=\", &writer_{escmodname}_{inm}_{myc});")
 }
-method compileclass(o) {
+method compileclass(o, includeConstant) {
     var signature := o.signature
     def obj = ast.objectNode.new(o.value, o.superclass)
     obj.classname := o.name.value
@@ -362,12 +372,16 @@ method compileclass(o) {
     }
     var obody := [newmeth]
     var cobj := ast.objectNode.new(obody, false)
-    var con := ast.defDecNode.new(o.name, cobj, false)
-    if ((compilationDepth == 1) && {o.name.kind != "generic"}) then {
-        def meth = ast.methodNode.new(o.name, [ast.signaturePart.new(o.name)], [o.name], false)
-        compilenode(meth)
+    if (includeConstant) then {
+        var con := ast.defDecNode.new(o.name, cobj, false)
+        if ((compilationDepth == 1) && {o.name.kind != "generic"}) then {
+            def meth = ast.methodNode.new(o.name, [ast.signaturePart.new(o.name)], [o.name], false)
+            compilenode(meth)
+        }
+        o.register := compilenode(con)
+    } else {
+        o.register := compilenode(cobj)
     }
-    o.register := compilenode(con)
 }
 method compileobject(o, outerRef) {
     var origInBlock := inBlock
@@ -427,6 +441,22 @@ method compileobject(o, outerRef) {
             compileobjdefdecmeth(e, selfr, pos)
             out("\}")
             compileobjdefdecdata(e, selfr, pos)
+        } elseif (e.kind == "class") then {
+            def cd = ast.defDecNode.new(e.name,
+                e, false)
+            if (util.extensions.contains("DefaultVisibility")) then {
+                if (util.extensions.get("DefaultVisibility") == "public") then
+                    {
+                    cd.annotations.push(ast.identifierNode.new("public",
+                        false))
+                    cd.annotations.push(ast.identifierNode.new("readable",
+                        false))
+                }
+            }
+            out("if (objclass{myc} == NULL) \{")
+            compileobjdefdecmeth(cd, selfr, pos)
+            out("\}")
+            compileobjdefdecdata(cd, selfr, pos)
         } elseif (e.kind == "inherits") then {
             superobj := compilenode(e.value)
             out("  self = setsuperobj({selfr}, {superobj});")
@@ -477,12 +507,17 @@ method compiletype(o) {
     def idName = escapeident(o.value)
     out("// Type {o.value}")
     out("Object type{myc} = alloc_Type(\"{escName}\", {o.methods.size});")
-    out("*var_{idName} = type{myc};")
+    if (!o.anonymous) then {
+        out("*var_{idName} = type{myc};")
+    }
     for (o.methods) do {meth->
         def mnm = escapestring2(meth.value)
         out("add_Method((ClassData)type{myc}, \"{mnm}\", NULL);")
     }
     o.register := "none"
+    if (o.anonymous) then {
+        o.register := "type{myc}"
+    }
 }
 method compilefor(o) {
     var myc := auto_count
@@ -899,12 +934,16 @@ method compileidentifier(o) {
         o.register := "ellipsis{auto_count}"
         auto_count := auto_count + 1
     } else {
-        name := escapestring2(name)
-        if (modules.contains(name)) then {
-            o.register := "module_" ++ name
+        if (importnames.contains(name)) then {
+            o.register := importnames.get(name)
         } else {
-            usedvars.push(name)
-            o.register := "*var_{name}"
+            name := escapestring2(name)
+            if (modules.contains(name)) then {
+                o.register := "module_" ++ name
+            } else {
+                usedvars.push(name)
+                o.register := "*var_{name}"
+            }
         }
     }
 }
@@ -955,6 +994,9 @@ method compiledefdec(o) {
     out("    callmethod(none, \"assignment\", 0, NULL, NULL);")
     if (compilationDepth == 1) then {
         compilenode(ast.methodNode.new(o.name, [ast.signaturePart.new(o.name)], [o.name], false))
+        if (ast.findAnnotation(o, "parent")) then {
+            out("  ((struct UserObject *)self)->super = {val};")
+        }
     }
     o.register := "none"
 }
@@ -1191,8 +1233,8 @@ method compilecall(o, tailcall) {
         for (o.with.indices) do { partnr ->
             out("  partcv[{partnr - 1}] = {o.with[partnr].args.size};")
         }
-        out("  Object call{auto_count} = callmethod(prelude, \"{evl}\", "
-            ++ "{nparts}, partcv, params);")
+        out("  Object call{auto_count} = callmethodflags(prelude, \"{evl}\", "
+            ++ "{nparts}, partcv, params, CFLAG_SELF);")
     } elseif ((o.value.kind == "member") && {(o.value.in.kind == "identifier")
         && (o.value.in.value == "platform")}) then {
         out("// Import of " ++ o.value.value)
@@ -1267,25 +1309,80 @@ method compileoctets(o) {
     o.register := "octlit" ++ auto_count
     auto_count := auto_count + 1
 }
-method compileimport(o) {
-    out("// Import of " ++ o.value.value)
+method compiledialect(o) {
+    out("// Dialect import of {o.value}")
     var con
-    var nm := escapeident(o.value.value)
-    var fn := escapestring2(o.value.value)
-    var modg := "module_" ++ nm
+    var snm := ""
+    for (o.value) do {c->
+        if (c == "/") then {
+            snm := ""
+        } else {
+            snm := snm ++ c
+        }
+    }
+    var nm := "dialect"
+    var fn := escapestring2(o.value)
+    var modg := "module_" ++ escapeident(o.value)
+    var modgn := "module_" ++ nm
+    var modgs := "module_" ++ snm
+    importnames.put(nm, modg)
     out("  if ({modg} == NULL)")
-    if (staticmodules.contains(nm)) then {
+    if (staticmodules.contains(o.value)) then {
         out("    {modg} = {modg}_init();")
     } else {
         out("    {modg} = dlmodule(\"{fn}\");")
     }
     out("  Object *var_{nm} = alloc_var();")
     out("  *var_{nm} = {modg};")
-    modules.add(nm)
+    out("  prelude = {modg};")
+    modules.add("dialect")
     globals.push("Object {modg}_init();")
     globals.push("Object {modg};")
     auto_count := auto_count + 1
     o.register := "none"
+}
+method compileimport(o) {
+    out("// Import of {o.path} as {o.value}")
+    var con
+    var snm := ""
+    for (o.path) do {c->
+        if (c == "/") then {
+            snm := ""
+        } else {
+            snm := snm ++ c
+        }
+    }
+    o.register := "none"
+    var nm := escapeident(o.value)
+    var fn := escapestring2(o.path)
+    var modg := "module_" ++ escapeident(o.path)
+    var modgn := "module_" ++ nm
+    var modgs := "module_" ++ snm
+    modules.add(nm)
+    globals.push("Object {modg};")
+    importnames.put(nm, modg)
+    out("  Object *var_{nm} = alloc_var();")
+    if (false != importHook) then {
+        def res = importHook.processImport(nm)
+        if (false != res) then {
+            for (res.importCode) do {l->
+                out(l)
+            }
+            for (res.globals) do {l->
+                globals.push(l)
+            }
+            out("  *var_{nm} = {res.moduleSymbol};")
+            return true
+        }
+    }
+    out("  if ({modg} == NULL)")
+    if (staticmodules.contains(o.path)) then {
+        out("    {modg} = {modg}_init();")
+    } else {
+        out("    {modg} = dlmodule(\"{fn}\");")
+    }
+    out("  *var_{nm} = {modg};")
+    globals.push("Object {modg}_init();")
 }
 method compilereturn(o) {
     var reg
@@ -1347,6 +1444,9 @@ method compilenode(o) {
     if (o.kind == "octets") then {
         compileoctets(o)
     }
+    if (o.kind == "dialect") then {
+        compiledialect(o)
+    }
     if (o.kind == "import") then {
         compileimport(o)
     }
@@ -1400,7 +1500,7 @@ method compilenode(o) {
         compilecatchcase(o)
     }
     if (o.kind == "class") then {
-        compileclass(o)
+        compileclass(o, true)
     }
     if (o.kind == "object") then {
         compileobject(o, "self")
@@ -1475,9 +1575,9 @@ method compilenode(o) {
     out("// compilenode returning " ++ o.register)
     o.register
 }
-method spawnSubprocess(id, cmd) {
+method spawnSubprocess(id, cmd, data) {
     if (subprocesses.size < util.jobs) then {
-        return subprocesses.push([id, io.spawn("bash", "-c", cmd)])
+        return subprocesses.push([id, io.spawn("bash", "-c", cmd), data])
     }
     var alive := 0
     var firstAlive := false
@@ -1493,7 +1593,7 @@ method spawnSubprocess(id, cmd) {
     if (alive >= util.jobs) then {
         firstAlive[2].wait
     }
-    subprocesses.push([id, io.spawn("bash", "-c", cmd)])
+    subprocesses.push([id, io.spawn("bash", "-c", cmd), data])
 }
 method findPlatformUses(vals) {
     def vis = object {
@@ -1510,6 +1610,29 @@ method findPlatformUses(vals) {
         v.accept(vis)
     }
 }
+method parseGCT(path, filepath) {
+    xmodule.parseGCT(path,
+        filepath.replace(".gcn")with(".gct").replace(".gso")with(".gct"))
+}
+method addTransitiveImports(filepath, epath) {
+    def data = parseGCT(epath, filepath)
+    if (data.contains("modules")) then {
+        for (data.get("modules")) do {m->
+            if (m == util.modname) then {
+                util.syntax_error("Cyclic import detected: '{m}' is imported "
+                    ++ "by '{epath}', which is imported by '{m}' (and so on).")
+            }
+            checkimport(m)
+        }
+    }
+    if (data.contains("path")) then {
+        def path = data.get("path").first
+        if (path != epath) then {
+            util.syntax_error("Imported module '{epath}' compiled with"
+                ++ " different path: uses {path}.")
+        }
+    }
+}
 method checkimport(nm) {
     var exists := false
     var ext := false
@@ -1518,19 +1641,44 @@ method checkimport(nm) {
     if (staticmodules.contains(nm)) then {
         return true
     }
+    if (false != importHook) then {
+        def res = importHook.processImport(nm)
+        if (false != res) then {
+            for (res.linkTargets) do {t->
+                staticmodules.push(t)
+            }
+            return true
+        }
+    }
     if (io.exists("{sys.execPath}/{nm}.gso") &&
         {!util.extensions.contains("Static")}) then {
         exists := true
+        addTransitiveImports("{sys.execPath}/{nm}.gso", nm)
     } elseif (io.exists(nm ++ ".gso") &&
         {!util.extensions.contains("Static")}) then {
         exists := true
+        addTransitiveImports("{nm}.gso", nm)
     } elseif (io.exists(io.realpath(sys.execPath)
         ++ "/../lib/minigrace/{nm}.gso") &&
             {!util.extensions.contains("Static")}) then {
         exists := true
+        addTransitiveImports(io.realpath(sys.execPath)
+            ++ "/../lib/minigrace/{nm}.gso", nm)
     } elseif(nm == "StandardPrelude") then {
         exists := true
         staticmodules.add(nm)
+        addTransitiveImports(io.realpath(sys.execPath)
+            ++ "/StandardPrelude.gcn", nm)
+    } elseif (io.exists("{sys.execPath}/modules/{nm}.gcn")) then {
+        exists := true
+        linkfiles.push("{sys.execPath}/modules/{nm}.gcn")
+        staticmodules.add(nm)
+        addTransitiveImports("{sys.execPath}/modules/{nm}.gcn", nm)
+    } elseif (io.exists("{sys.execPath}/../lib/minigrace/modules/{nm}.gcn")) then {
+        exists := true
+        linkfiles.push("{sys.execPath}/../lib/minigrace/modules/{nm}.gcn")
+        staticmodules.add(nm)
+        addTransitiveImports("{sys.execPath}/../lib/minigrace/modules/{nm}.gcn", nm)
     } elseif (io.exists("{sys.execPath}/{nm}.gcn") && {
             !io.exists("{nm}.grace")
         }) then {
@@ -1539,10 +1687,20 @@ method checkimport(nm) {
         exists := true
         linkfiles.push("{sys.execPath}/{nm}.gcn")
         staticmodules.add(nm)
+        addTransitiveImports("{sys.execPath}/{nm}.gcn", nm)
+    } elseif (io.exists("{sys.execPath}/../lib/minigrace/{nm}.gcn") && {
+            !io.exists("{nm}.grace")
+        }) then {
+        // Find static modules like unicode alongside compiler,
+        // but not modules compiled from Grace code here.
+        exists := true
+        linkfiles.push("{sys.execPath}/../lib/minigrace/{nm}.gcn")
+        addTransitiveImports("{sys.execPath}/../lib/minigrace/{nm}.gcn", nm)
     } elseif (io.exists(nm ++ ".gcn").andAlso {!util.importDynamic}) then {
         if (io.newer(nm ++ ".gcn", nm ++ ".grace")) then {
             exists := true
             linkfiles.push(nm ++ ".gcn")
+            addTransitiveImports(nm ++ ".gcn", nm)
             staticmodules.add(nm)
         }
     }
@@ -1570,7 +1728,7 @@ method checkimport(nm) {
                 cmd := cmd ++ " --import-dynamic --dynamic-module"
             }
             if (util.recurse) then {
-                spawnSubprocess(nm, cmd)
+                spawnSubprocess(nm, cmd, [nm ++ ".gcn", nm])
             }
             exists := true
             if (!util.importDynamic) then {
@@ -1590,22 +1748,102 @@ method checkimport(nm) {
 }
 var subprocesses := collections.list.new
 var linkfiles := collections.list.new
+method processImports(values') {
+    if (util.runmode == "make") then {
+        log_verbose("checking imports.")
+        if (util.extensions.contains("ImportHook")) then {
+            importHook := mirrors.loadDynamicModule(
+                            util.extensions.get "ImportHook")
+        }
+        for (values') do { v ->
+            if (v.kind == "import") then {
+                var nm := v.path
+                checkimport(nm)
+            }
+            if (v.kind == "dialect") then {
+                var nm := v.value
+                checkimport(nm)
+                log_verbose("loading dialect for checkers.")
+                def CheckerFailure = Exception.refine "CheckerFailure"
+                catch {
+                    def dobj = mirrors.loadDynamicModule(nm)
+                    def mths = mirrors.reflect(dobj).methods
+                    for (mths) do { m->
+                        if (m.name == "checker") then {
+                            log_verbose("running dialect's checkers.")
+                            dobj.checker(values')
+                        }
+                    }
+                } case { e : RuntimeError ->
+                    util.setPosition(v.line, 1)
+                    util.syntax_error("dialect '{nm}' failed to load: {e}")
+                } case { e : CheckerFailure ->
+                    if (nothing != e.data) then {
+                        util.setPosition(e.data.line, e.data.linePos)
+                    }
+                    util.syntax_error("dialect failure: {e.message}")
+                }
+            }
+        }
+        findPlatformUses(values')
+        def imperrors = []
+        while {subprocesses.size > 0} do {
+            def lsubprocesses = subprocesses
+            subprocesses := collections.list.new
+            for (lsubprocesses) do { tt->
+                def nm = tt[1]
+                def p = tt[2]
+                def pth = tt[3]
+                if (!p.success) then {
+                    imperrors.push(nm)
+                } else {
+                    addTransitiveImports(pth[1], pth[2])
+                }
+            }
+        }
+        if (imperrors.size > 0) then {
+            util.syntax_error("failed processing import of " ++ imperrors ++".")
+        }
+    }
+}
 method compile(vl, of, mn, rm, bt) {
     var argv := sys.argv
     var cmd
     values := vl
-    var nummethods := 2
+    def methods = collections.list.new
+    def confidentials = collections.list.new
+    var nummethods := 2 + countbindings(values)
     for (values) do { v->
         if (v.kind == "vardec") then {
-            nummethods := nummethods + 2
+            nummethods := nummethods + 1
+            if (ast.isPublic(v)) then {
+                methods.push(v.name.value)
+                if (ast.isWritable(v)) then {
+                    methods.push(v.name.value ++ ":=")
+                }
+            }
         } elseif (v.kind == "method") then {
             nummethods := nummethods + 1
+            if (ast.isPublic(v)) then {
+                methods.push(v.value.value)
+            } else {
+                confidentials.push(v.value.value)
+            }
         } elseif (v.kind == "defdec") then {
-            nummethods := nummethods + 1
+            if (ast.isPublic(v)) then {
+                methods.push(v.name.value)
+            }
+            if (ast.findAnnotation(v, "parent")) then {
+                if (false != v.dtype) then {
+                    for (v.dtype.methods) do {m->
+                        methods.push(m.value)
+                    }
+                }
+            }
         } elseif (v.kind == "class") then {
-            nummethods := nummethods + 1
+            methods.push(v.name.value)
         } elseif (v.kind == "type") then {
-            nummethods := nummethods + 1
+            methods.push(v.value)
         }
     }
     outfile := of
@@ -1613,27 +1851,6 @@ method compile(vl, of, mn, rm, bt) {
     escmodname := escapeident(modname)
     runmode := rm
     buildtype := bt
-    if (runmode == "make") then {
-        log_verbose("checking imports.")
-        for (values) do { v ->
-            if (v.kind == "import") then {
-                var nm := v.value.value
-                checkimport(nm)
-            }
-        }
-        findPlatformUses(values)
-        def imperrors = []
-        for (subprocesses) do { tt->
-            def nm = tt[1]
-            def p = tt[2]
-            if (!p.success) then {
-                imperrors.push(nm)
-            }
-        }
-        if (imperrors.size > 0) then {
-            util.syntax_error("failed processing import of " ++ imperrors ++".")
-        }
-    }
     outprint("#include <gracelib.h>")
     outprint("#include <stdlib.h>")
     outprint("#ifndef __CYGWIN__")
@@ -1831,10 +2048,10 @@ method compile(vl, of, mn, rm, bt) {
             cmd := "gcc -g -o \"{modname}\" -fPIC {exportDynamicBit} "
                 ++ "\"{modname}.gcn\" "
                 ++ "\"" ++ util.gracelibPath ++ "/gracelib.o\" "
-                ++ "-lm {dlbit}"
             for (linkfiles) do { fn ->
                 cmd := cmd ++ " " ++ fn
             }
+            cmd := cmd ++ " -lm {dlbit}"
             if ((io.system(cmd)).not) then {
                 io.error.write("Failed linking")
                 sys.exit(1)
@@ -1860,6 +2077,82 @@ method compile(vl, of, mn, rm, bt) {
             }
         }
         log_verbose("done.")
+        def tfp = io.open(modname ++ ".gct", "w")
+        tfp.write("modules:\n")
+        for (staticmodules) do {sm->
+            tfp.write(" {sm}\n")
+        }
+        tfp.write("path:\n {modname}\n")
+        tfp.write("public:\n")
+        for (methods) do {methodName->
+            tfp.write(" {methodName}\n")
+        }
+        tfp.write("confidential:\n")
+        for (confidentials) do {methodName->
+            tfp.write(" {methodName}\n")
+        }
+        def classes = collections.list.new
+        for (values) do {val->
+            if (val.kind == "class") then {
+                tfp.write("constructors-of:{val.name.value}:\n")
+                tfp.write(" {val.constructor.value}\n")
+                tfp.write("methods-of:{val.name.value}.{val.constructor.value}:\n")
+                for (val.instanceMethods) do {im->
+                    tfp.write(" {im.value}\n")
+                }
+                classes.push(val.name.value)
+            }
+            if (val.kind == "defdec") then {
+                if (val.value.kind == "object") then {
+                    def ob = val.value
+                    var isClass := false
+                    def obConstructors = collections.list.new
+                    for (ob.value) do {nd->
+                        if (nd.kind == "method") then {
+                            if (nd.properties.contains("fresh")) then {
+                                isClass := true
+                                obConstructors.push(nd.value)
+                                tfp.write("methods-of:{val.name.value}.{nd.value.value}:\n")
+                                for (nd.properties.get("fresh").methods) do {
+                                    im->
+                                    tfp.write(" {im.value}\n")
+                                }
+                            }
+                        }
+                    }
+                    if (obConstructors.size > 0) then {
+                        tfp.write("constructors-of:{val.name.value}:\n")
+                        for (obConstructors) do {im->
+                            tfp.write(" {im.value}\n")
+                        }
+                        classes.push(val.name.value)
+                    }
+                }
+            }
+        }
+        tfp.write("classes:\n")
+        for (classes) do {c->
+            tfp.write(" {c}\n")
+        }
+        tfp.write("fresh-methods:\n")
+        for (values) do {val->
+            if (val.kind == "method") then {
+                if (val.properties.contains("fresh")) then {
+                    tfp.write(" {val.value.value}\n")
+                }
+            }
+        }
+        for (values) do {val->
+            if (val.kind == "method") then {
+                if (val.properties.contains("fresh")) then {
+                    tfp.write("fresh:{val.value.value}:\n")
+                    for (val.properties.get("fresh").methods) do {im->
+                        tfp.write(" {im.value}\n")
+                    }
+                }
+            }
+        }
+        tfp.close
         if (buildtype == "run") then {
             if (modname[1] != "/") then {
                 cmd := "./" ++ modname

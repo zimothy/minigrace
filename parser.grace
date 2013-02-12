@@ -1,9 +1,9 @@
 #pragma DefaultVisibility=public
-import io
-import ast
-import util
-import subtype
-import mgcollections
+def io = platform.io
+def ast = platform.ast
+def util = platform.util
+def subtype = platform.subtype
+def mgcollections = platform.mgcollections
 
 def collections = mgcollections
 
@@ -18,9 +18,10 @@ var tokens := 0
 var values := []
 var auto_count := 0
 var don'tTakeBlock := false
-var defaultDefVisibility := "confidential"
-var defaultVarVisibility := "confidential"
-var defaultMethodVisibility := "confidential"
+var braceIsType := false
+var defaultDefVisibility := "local"
+var defaultVarVisibility := "local"
+var defaultMethodVisibility := "public"
 
 // Global object containing the current token
 var sym
@@ -114,6 +115,14 @@ method expectConsume(ablock) {
     ablock.apply
     if (tokens.size == sz) then {
         util.syntax_error("unable to consume token")
+    }
+}
+// Expect block to consume at least one token, or report string error
+method expectConsume(ablock)error(msg) {
+    var sz := tokens.size
+    ablock.apply
+    if (tokens.size == sz) then {
+        util.syntax_error(msg)
     }
 }
 // Expect block to consume at least one token, or call fallback code.
@@ -280,7 +289,9 @@ method block {
                     // We allow an expression here for the case of v : T
                     // patterns, where T may be "Pair(hd, tl)" or similar.
                     next
+                    braceIsType := true
                     expression
+                    braceIsType := false
                     ident1.dtype := values.pop
                 }
                 params.push(ident1)
@@ -668,6 +679,8 @@ method term {
         identifier
     } elseif (accept("keyword") && (sym.value == "object")) then {
         doobject
+    } elseif (accept("lbrace") && braceIsType) then {
+        dotypeterm
     } elseif (accept("lbrace")) then {
         block
     } elseif (accept("lsquare")) then {
@@ -1048,6 +1061,8 @@ method callmprest(meth, signature, tok) {
 // Accept a const declaration
 method defdec {
     if (accept("keyword") && (sym.value == "def")) then {
+        def line = sym.line
+        def pos = sym.linePos
         next
         pushidentifier
         var val := false
@@ -1061,21 +1076,30 @@ method defdec {
         def anns = doannotation
         if (accept("op") && (sym.value == "=")) then {
             next
-            expression
+            expectConsume {
+                expression
+            } error "initial value of def expected after =."
             val := values.pop
         } elseif (accept("bind")) then {
             util.syntax_error("def declaration uses '=', not ':='")
         } else {
             util.syntax_error("def declaration requires value")
         }
+        util.setPosition(line, pos)
         var o := ast.defDecNode.new(name, val, dtype)
         var hasVisibility := false
+        var hasAccessibility := false
         if (anns != false) then {
             for (anns) do {a->
                 if ((a.kind == "identifier").andAlso {
                     (a.value == "public")
                      || (a.value == "confidential")}) then {
                     hasVisibility := true
+                }
+                if ((a.kind == "identifier").andAlso {
+                    (a.value == "readable")
+                     || (a.value == "writable")}) then {
+                    hasAccessibility := true
                 }
             }
             o.annotations.extend(anns)
@@ -1085,6 +1109,8 @@ method defdec {
                 o.annotations.push(ast.identifierNode.new("confidential",
                     false))
             }
+        }
+        if (!hasAccessibility) then {
             if (defaultDefVisibility == "public") then {
                 o.annotations.push(ast.identifierNode.new("readable",
                     false))
@@ -1097,6 +1123,8 @@ method defdec {
 // Accept a var declaration
 method vardec {
     if (accept("keyword") && (sym.value == "var")) then {
+        def line = sym.line
+        def pos = sym.linePos
         next
         pushidentifier
         var val := false
@@ -1110,20 +1138,29 @@ method vardec {
         def anns = doannotation
         if (accept("bind")) then {
             next
-            expression
+            expectConsume {
+                expression
+            } error "initial value of var expected after :=."
             val := values.pop
         }
         if (accept("op") && (sym.value == "=")) then {
             util.syntax_error("var declaration uses ':=', not '='")
         }
+        util.setPosition(line, pos)
         var o := ast.varDecNode.new(name, val, dtype)
         var hasVisibility := false
+        var hasAccessibility := false
         if (anns != false) then {
             for (anns) do {a->
                 if ((a.kind == "identifier").andAlso {
                     (a.value == "public")
                      || (a.value == "confidential")}) then {
                     hasVisibility := true
+                }
+                if ((a.kind == "identifier").andAlso {
+                    (a.value == "readable")
+                     || (a.value == "writable")}) then {
+                    hasAccessibility := true
                 }
             }
             o.annotations.extend(anns)
@@ -1133,6 +1170,8 @@ method vardec {
                 o.annotations.push(ast.identifierNode.new("confidential",
                     false))
             }
+        }
+        if (!hasAccessibility) then {
             if (defaultVarVisibility == "public") then {
                 o.annotations.push(ast.identifierNode.new("readable",
                     false))
@@ -1163,6 +1202,16 @@ method doarray {
         expect("rsquare")
         var o := ast.arrayNode.new(params)
         values.push(o)
+        next
+    }
+}
+
+// Accept "dialect "X""
+method dodialect {
+    if (accept("keyword") && (sym.value == "dialect")) then {
+        next
+        expect "string"
+        values.push(ast.dialectNode.new(sym.value))
         next
     }
 }
@@ -1462,8 +1511,8 @@ method methoddec {
             if (accept("rbrace")) then {
                 next
             } else {
-                util.syntax_error("No statement but not end of "
-                    ++ meth.value ++ ". Have " ++ sym.kind ++ ".")
+                util.syntax_error("Statement or closing brace of body of "
+                    ++ "method '{meth.value}' expected, not {sym.kind}.")
             }
             minIndentLevel := localMin
         } else {
@@ -1523,7 +1572,7 @@ method parsempmndecrest(tm, sameline) {
             nxt := values.pop
             if (accept("colon")) then {
                 next
-                pushidentifier
+                dotyperef
                 var tp := values.pop
                 nxt.dtype := tp
             }
@@ -1562,7 +1611,7 @@ method methodsignature(sameline) {
     if (accept("lgeneric")) then {
         // Generic!
         next
-        genericIdents := mgcollections.list.new
+        genericIdents := part.generics
         while {accept("identifier")} do {
             identifier
             genericIdents.push(values.pop)
@@ -1656,10 +1705,24 @@ method methodsignature(sameline) {
 method doimport {
     if (accept("keyword") && (sym.value == "import")) then {
         next
+        expect("string")
+        pushstring
+        def p = values.pop
         expect("identifier")
-        identifier
-        var p := values.pop
-        var o := ast.importNode.new(p)
+        if (sym.value != "as") then {
+            util.syntax_error("unexpected token {sym.kind}:{sym.value}; "
+                ++ "expected 'as'.")
+        }
+        next
+        expect("identifier")
+        pushidentifier
+        def n = values.pop
+        def o = ast.importNode.new(p.value, n.value)
+        if (accept("colon")) then {
+            next
+            dotypeterm
+            o.dtype := values.pop
+        }
         values.push(o)
     }
 }
@@ -1716,6 +1779,7 @@ method doanontype {
         }
         next
         def t = ast.typeNode.new("<Anon_{mc}>", methods)
+        t.anonymous := true
         values.push(t)
     }
 }
@@ -1759,6 +1823,7 @@ method dotype {
             for (ot.intersectionTypes) do {ut->
                 nt.intersectionTypes.push(ut)
             }
+            nt.generics := gens
             values.push(nt)
         }
     }
@@ -1772,6 +1837,7 @@ method checkIndent {
     } elseif ((sym.kind == "rbrace") || (sym.kind == "rparen")
         || (sym.kind == "rsquare")) then {
         // pass
+    } elseif (sym.kind == "eof") then {
     } elseif (sym.indent < minIndentLevel) then {
         if ((sym.linePos - 1) != minIndentLevel) then {
             util.syntax_error("block and indentation inconsistent "
@@ -1802,6 +1868,8 @@ method statement {
             util.syntax_error("no such keyword const; did you mean def?")
         } elseif (sym.value == "import") then {
             doimport
+        } elseif (sym.value == "dialect") then {
+            dodialect
         } elseif (sym.value == "type") then {
             dotype
         } elseif (sym.value == "class") then {

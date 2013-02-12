@@ -1,6 +1,6 @@
 #pragma DefaultVisibility=public
 
-import util
+def util = platform.util
 
 def types = []
 def typesToId = HashMap.new
@@ -146,7 +146,18 @@ method simpleCheckThat(a)mayBeSubtypeOf(b) {
     if ((a == false) || (b == false)) then {
         return true
     }
-    matrix.get(stringifyType(a)).get(stringifyType(b))
+    def a' = stringifyType(a)
+    def b' = stringifyType(b)
+    if (a' == b') then {
+        return true
+    }
+    if (a'.size == 1) then {
+        return true
+    }
+    if (b'.size == 1) then {
+        return true
+    }
+    matrix.get(a').get(b')
 }
 method checkThat(a)mayBeSubtypeOf(b) {
     if (a.value == "Dynamic") then {

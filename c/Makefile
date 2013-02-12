@@ -1,5 +1,5 @@
 include Makefile.conf
-CFILES = ast.c buildinfo.c genc.c genjs.c typechecker.c lexer.c parser.c subtype.c util.c mgcollections.c
+CFILES = ast.c buildinfo.c genc.c genjs.c typechecker.c lexer.c parser.c subtype.c util.c mgcollections.c interactive.c xmodule.c
 
 minigrace: $(CFILES:.c=.gcn) minigrace.gcn $(STATIC_MODULES) $(UNICODE_MODULE) gracelib.o $(OTHER_MODULES)
 	gcc -o minigrace -fPIC gracelib.o minigrace.gcn $(CFILES:.c=.gcn) $(STATIC_MODULES) $(LDFLAGS)
@@ -27,7 +27,13 @@ mirrors.gcn: mirrors.c gracelib.h
 	gcc -std=c99 -g -c -o mirrors.gcn mirrors.c
 
 curl.gso: curl.c gracelib.h
-	gcc -std=c99 $(UNICODE_LDFLAGS) -lcurl -fPIC -shared -o curl.gso curl.c
+	gcc -std=c99 $(UNICODE_LDFLAGS) -fPIC -shared -o curl.gso curl.c -lcurl
+
+repl.gso: repl.c gracelib.h
+	gcc -std=c99 $(UNICODE_LDFLAGS) -fPIC -shared -o repl.gso repl.c
+
+repl.gcn: repl.c gracelib.h
+	gcc -std=c99 -g -c -o repl.gcn repl.c
 
 gracelib.o: gracelib.c StandardPrelude.c debugger.o
 	gcc -std=c99 -c -o gracelib-basic.o gracelib.c

@@ -179,6 +179,7 @@ method splitString(string : String) with(test : Block) is public {
 
 // Splits a list in two using a test function.
 method splitList(list) with(test : Block) is public {
+    print("boop")
     split(list) with(test) using([], [], { list', value ->
         list'.push(value)
     })

@@ -104,6 +104,8 @@ ClassData Class;
 ClassData MatchResult;
 ClassData OrPattern;
 ClassData AndPattern;
+ClassData GreaterThanPattern;
+ClassData LessThanPattern;
 ClassData ExceptionPacket;
 ClassData Exception;
 
@@ -451,6 +453,22 @@ Object gracebecome(Object subObject, Object superObject) {
     sup->data = subdata;
     return superObject;
 }
+Object graceunbecome(Object topObj) {
+    struct UserObject *top = (struct UserObject *)topObj;
+    struct UserObject *extra = (struct UserObject *)top->super;
+    // Swap the class and data on the two objects
+    ClassData extraclass = top->class;
+    Object *extradata = (Object *)top->data;
+    ClassData topclass = extra->class;
+    Object *topdata = (Object *)extra->data;
+    top->class = topclass;
+    top->data = topdata;
+    extra->class = extraclass;
+    extra->data = extradata;
+    // Remove the extra object from the chain
+    top->super = extra->super;
+    return (Object)extra;
+}
 Method *addmethodrealflags(Object o, char *name,
         Object (*func)(Object, int, int*, Object*, int), int flags) {
     Method *m = add_Method(o->class, name, func);
@@ -637,6 +655,56 @@ Object alloc_AndPattern(Object l, Object r) {
     struct UserObject *b = (struct UserObject *)o;
     b->data[0] = l;
     b->data[1] = r;
+    return o;
+}
+Object LessThanPattern_match(Object self, int nparts, int *argcv, Object *argv,
+        int flags) {
+    struct UserObject *b = (struct UserObject *)self;
+    Object target = argv[0];
+    Object right = b->data[0];
+    int tmp[1] = {1};
+    Object m = callmethod(target, "<", 1, argcv, &right);
+    if (istrue(m))
+        return alloc_SuccessfulMatch(target, NULL);
+    return alloc_FailedMatch(target, NULL);
+}
+Object alloc_LessThanPattern(Object r) {
+    Object o = alloc_userobj2(3, 2, LessThanPattern);
+    if (!LessThanPattern) {
+        LessThanPattern = o->class;
+        glfree(o->class->name);
+        o->class->name = "LessThanPattern";
+        add_Method(LessThanPattern, "|", &literal_or);
+        add_Method(LessThanPattern, "&", &literal_and);
+        add_Method(LessThanPattern, "match", &LessThanPattern_match);
+    }
+    struct UserObject *b = (struct UserObject *)o;
+    b->data[0] = r;
+    return o;
+}
+Object GreaterThanPattern_match(Object self, int nparts, int *argcv, Object *argv,
+        int flags) {
+    struct UserObject *b = (struct UserObject *)self;
+    Object target = argv[0];
+    Object right = b->data[0];
+    int tmp[1] = {1};
+    Object m = callmethod(target, "<", 1, argcv, &right);
+    if (istrue(m))
+        return alloc_SuccessfulMatch(target, NULL);
+    return alloc_FailedMatch(target, NULL);
+}
+Object alloc_GreaterThanPattern(Object r) {
+    Object o = alloc_userobj2(3, 2, GreaterThanPattern);
+    if (!GreaterThanPattern) {
+        GreaterThanPattern = o->class;
+        glfree(o->class->name);
+        o->class->name = "GreaterThanPattern";
+        add_Method(GreaterThanPattern, "|", &literal_or);
+        add_Method(GreaterThanPattern, "&", &literal_and);
+        add_Method(GreaterThanPattern, "match", &GreaterThanPattern_match);
+    }
+    struct UserObject *b = (struct UserObject *)o;
+    b->data[0] = r;
     return o;
 }
 
@@ -1541,6 +1609,8 @@ Object String_substringFrom_to(Object self,
     if (en > mysize)
         en = mysize;
     int cl = en - st;
+    if (cl < 0)
+        return alloc_String("");
     char buf[cl * 4 + 1];
     char *bufp = buf;
     buf[0] = 0;
@@ -1871,6 +1941,14 @@ Object Float64_Div(Object self, int nparts, int *argcv,
         b = integerfromAny(other);
     return alloc_Float64(a/b);
 }
+Object Float64_Exp(Object self, int nparts, int *argcv,
+                   Object *args, int flags) {
+    Object other = args[0];
+    assertClass(other, Number);
+    double a = *(double*)self->data;
+    double b = *(double*)other->data;
+    return alloc_Float64(pow(a,b));
+}
 Object Float64_Mod(Object self, int nparts, int *argcv,
         Object *args, int flags) {
     Object other = args[0];
@@ -2010,6 +2088,14 @@ void Float64__mark(Object self) {
     if (*strp != NULL)
         gc_mark(*strp);
 }
+Object Float64_prefixLessThan(Object self, int nparts, int *argcv,
+        Object *args, int flags) {
+    return alloc_LessThanPattern(self);
+}
+Object Float64_prefixGreaterThan(Object self, int nparts, int *argcv,
+        Object *args, int flags) {
+    return alloc_GreaterThanPattern(self);
+}
 Object alloc_Float64(double num) {
     if (num == 0 && FLOAT64_ZERO != NULL)
         return FLOAT64_ZERO;
@@ -2023,11 +2109,12 @@ Object alloc_Float64(double num) {
             && Float64_Interned[ival-FLOAT64_INTERN_MIN] != NULL)
         return Float64_Interned[ival-FLOAT64_INTERN_MIN];
     if (Number == NULL) {
-        Number = alloc_class2("Number", 24, (void*)&Float64__mark);
+        Number = alloc_class2("Number", 27, (void*)&Float64__mark);
         add_Method(Number, "+", &Float64_Add);
         add_Method(Number, "*", &Float64_Mul);
         add_Method(Number, "-", &Float64_Sub);
         add_Method(Number, "/", &Float64_Div);
+        add_Method(Number, "^", &Float64_Exp);
         add_Method(Number, "%", &Float64_Mod);
         add_Method(Number, "==", &Float64_Equals);
         add_Method(Number, "!=", &Object_NotEquals);
@@ -2046,6 +2133,8 @@ Object alloc_Float64(double num) {
         add_Method(Number, "match", &literal_match);
         add_Method(Number, "|", &literal_or);
         add_Method(Number, "&", &literal_and);
+        add_Method(Number, "prefix<", &Float64_prefixLessThan);
+        add_Method(Number, "prefix>", &Float64_prefixGreaterThan);
     }
     Object o = alloc_obj(sizeof(double) + sizeof(Object), Number);
     double *d = (double*)o->data;
@@ -2221,7 +2310,8 @@ Object File_getline(Object self, int nparts, int *argcv,
     } else {
         str = alloc_String("");
     }
-    free(line);
+    if (line)
+        free(line);
     return str;
 }
 Object File_read(Object self, int nparts, int *argcv,
@@ -2536,6 +2626,46 @@ Object module_io_init() {
     gc_root(o);
     return o;
 }
+ClassData EnvironObject;
+Object environObject;
+Object environObject_at(Object self, int nparts, int *argcv,
+        Object *args, int flags) {
+    char *s = grcstring(args[0]);
+    char *v = getenv(s);
+    if (v)
+        return alloc_String(v);
+    return alloc_String("");
+}
+Object environObject_atPut(Object self, int nparts, int *argcv,
+        Object *args, int flags) {
+    char *s = grcstring(args[0]);
+    char *v = grcstring(args[1]);
+    setenv(s, v, 1);
+    return alloc_Boolean(1);
+}
+Object environObject_contains(Object self, int nparts, int *argcv,
+        Object *args, int flags) {
+    char *s = grcstring(args[0]);
+    char *v = getenv(s);
+    if (v)
+        return alloc_Boolean(1);
+    return alloc_Boolean(0);
+}
+Object alloc_environObject() {
+    if (environObject)
+        return environObject;
+    if (!EnvironObject) {
+        EnvironObject = alloc_class("Environ", 5);
+        add_Method(EnvironObject, "at", &environObject_at);
+        add_Method(EnvironObject, "[]", &environObject_at);
+        add_Method(EnvironObject, "at()put", &environObject_atPut);
+        add_Method(EnvironObject, "[]:=", &environObject_atPut);
+        add_Method(EnvironObject, "contains", &environObject_contains);
+    }
+    environObject = alloc_obj(0, EnvironObject);
+    gc_root(environObject);
+    return environObject;
+}
 Object sys_argv(Object self, int nparts, int *argcv,
         Object *args, int flags) {
     struct SysModule *so = (struct SysModule*)self;
@@ -2599,18 +2729,25 @@ Object sys_execPath(Object self, int nparts, int *argcv,
     char *dn = dirname(epm);
     return alloc_String(dn);
 }
+Object sys_environ(Object self, int nparts, int *argcv,
+        Object *args, int flags) {
+    if (!environObject)
+        environObject = alloc_environObject();
+    return environObject;
+}
 void sys__mark(struct SysModule *o) {
     gc_mark(o->argv);
 }
 Object module_sys_init() {
     if (sysmodule != NULL)
         return sysmodule;
-    SysModule = alloc_class2("Module<sys>", 5, (void*)*sys__mark);
+    SysModule = alloc_class2("Module<sys>", 6, (void*)*sys__mark);
     add_Method(SysModule, "argv", &sys_argv);
     add_Method(SysModule, "cputime", &sys_cputime);
     add_Method(SysModule, "elapsed", &sys_elapsed);
     add_Method(SysModule, "exit", &sys_exit);
     add_Method(SysModule, "execPath", &sys_execPath);
+    add_Method(SysModule, "environ", &sys_environ);
     Object o = alloc_obj(sizeof(Object), SysModule);
     struct SysModule *so = (struct SysModule*)o;
     so->argv = argv_List;
@@ -2621,10 +2758,11 @@ Object module_sys_init() {
 Object alloc_none() {
     if (none != NULL)
         return none;
-    None = alloc_class("noSuchValue", 3);
+    None = alloc_class("done", 4);
     add_Method(None, "==", &Object_Equals);
     add_Method(None, "!=", &Object_NotEquals);
     add_Method(None, "asString", &Object_asString);
+    add_Method(None, "asDebugString", &Object_asString);
     Object o = alloc_obj(0, None);
     none = o;
     gc_root(o);
@@ -3926,15 +4064,17 @@ Object dlmodule(const char *name) {
     int blen = PATH_MAX;
     char buf[blen];
     if (!find_gso(name, buf)) {
-        fprintf(stderr, "minigrace: could not find dynamic module %s.\n",
-                name);
-        exit(1);
+        gracedie("unable to find dynamic module '%s'", name);
     }
     void *handle = dlopen(buf, RTLD_LAZY | RTLD_GLOBAL);
+    if (!handle)
+        gracedie("failed to load dynamic module '%s'", buf);
     strcpy(buf, "module_");
     strcat(buf, name);
     strcat(buf, "_init");
     Object (*init)() = dlsym(handle, buf);
+    if (!init)
+        gracedie("failed to find initialiser in dynamic module '%s'", buf);
     Object mod = init();
     gc_root(mod);
     return mod;
@@ -4312,11 +4452,15 @@ Object prelude_become(Object self, int argc, int *argcv, Object *argv,
         int flags) {
     return gracebecome(argv[0], argv[1]);
 }
+Object prelude_unbecome(Object self, int argc, int *argcv, Object *argv,
+        int flags) {
+    return graceunbecome(argv[0]);
+}
 Object _prelude = NULL;
 Object grace_prelude() {
     if (prelude != NULL)
         return prelude;
-    ClassData c = alloc_class2("NativePrelude", 16, (void*)&UserObj__mark);
+    ClassData c = alloc_class2("NativePrelude", 17, (void*)&UserObj__mark);
     add_Method(c, "asString", &Object_asString);
     add_Method(c, "++", &Object_concat);
     add_Method(c, "==", &Object_Equals);
@@ -4333,6 +4477,7 @@ Object grace_prelude() {
     add_Method(c, "try()else", &prelude_tryElse);
     add_Method(c, "forceError", &prelude_forceError);
     add_Method(c, "become", &prelude_become);
+    add_Method(c, "unbecome", &prelude_unbecome);
     _prelude = alloc_userobj2(0, 7, c);
     gc_root(_prelude);
     prelude = _prelude;

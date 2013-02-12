@@ -1,8 +1,8 @@
-import ast
-import sys
-import unicode
-import util
-import utils
+import "ast" as ast
+import "sys" as sys
+import "unicode" as unicode
+def util = platform.util
+import "utils" as utils
 
 // The name for this is prone to change, so it makes sense to centralize it.
 def unitValue = "prelude.done()"

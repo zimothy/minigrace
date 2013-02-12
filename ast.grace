@@ -1,8 +1,6 @@
 #pragma DefaultVisibility=public
-import util
-import mgcollections
-
-def collections = mgcollections
+def util = platform.util
+def collections = platform.mgcollections
 
 // This module contains pseudo-classes for all the AST nodes used
 // in the parser. The module predates the existence of classes in the
@@ -416,6 +414,7 @@ class typeNode.new(name', methods') {
     def line = util.linenum
     var generics := []
     var nominal := false
+    var anonymous := false
     var register := ""
     method accept(visitor : ASTVisitor) {
         if (visitor.visitType(self)) then {
@@ -441,6 +440,12 @@ class typeNode.new(name', methods') {
         }
         var s := "Type\n"
         s := "{s}{spc}Name: {value}\n"
+        if (generics.size > 0) then {
+            s := "{s}{spc}Generic parameters:\n"
+            for (generics) do {ut->
+                s := "{s}{spc}  {ut.value}\n"
+            }
+        }
         if (unionTypes.size > 0) then {
             s := "{s}{spc}Union of:\n"
             for (unionTypes) do {ut->
@@ -540,6 +545,7 @@ class methodNode.new(name', signature', body', dtype') {
     var register := ""
     def line = util.linenum
     def annotations = collections.list.new
+    var properties := collections.map.new
     method accept(visitor : ASTVisitor) {
         if (visitor.visitMethod(self)) then {
             self.value.accept(visitor)
@@ -748,6 +754,7 @@ class classNode.new(name', signature', body', superclass', constructor') {
     var register := ""
     def line = util.linenum
     def superclass = superclass'
+    var instanceMethods := collections.list.new
     method accept(visitor : ASTVisitor) {
         if (visitor.visitClass(self)) then {
             self.name.accept(visitor)
@@ -1307,15 +1314,15 @@ class varDecNode.new(name', val', dtype') {
         s
     }
 }
-class importNode.new(name) {
+class importNode.new(path', name) {
     def kind = "import"
     def value = name
+    def path = path'
     var register := ""
     def line = util.linenum
+    var dtype := false
     method accept(visitor : ASTVisitor) {
-        if (visitor.visitImport(self)) then {
-            self.value.accept(visitor)
-        }
+        visitor.visitImport(self)
     }
     method pretty(depth) {
         var spc := ""
@@ -1324,12 +1331,34 @@ class importNode.new(name) {
         }
         var s := "Import"
         s := s ++ "\n"
-        s := s ++ spc ++ self.value.pretty(depth + 1)
+        s := s ++ "{spc}Path: {self.path}\n"
+        s := s ++ "{spc}Identifier: {self.value}\n"
         s
     }
     method toGrace(depth : Number) -> String {
-        var s := "import " ++ self.value.toGrace(depth + 1)
+        "import \"{self.path}\" as {self.value}"
+    }
+}
+class dialectNode.new(path') {
+    def kind = "dialect"
+    def value = path'
+    var register := ""
+    def line = util.linenum
+    method accept(visitor : ASTVisitor) {
+        visitor.visitDialect(self)
+    }
+    method pretty(depth) {
+        var spc := ""
+        for (0..depth) do { i ->
+            spc := spc ++ "  "
+        }
+        var s := "Dialect"
+        s := s ++ "\n"
+        s := s ++ "{spc}Path: {self.value}\n"
         s
+    }
+    method toGrace(depth : Number) -> String {
+        "dialect \"{self.value}\""
     }
 }
 class returnNode.new(expr) {
@@ -1381,41 +1410,21 @@ class inheritsNode.new(expr) {
     }
 }
 
-method signaturePart {
-    object {
-        method new(*values) {
-            object {
-                var name := ""
-                var params := []
-                var vararg := false
-                if (values.size > 0) then {
-                    name := values[1]
-                }
-                if (values.size > 1) then {
-                    params := values[2]
-                }
-                if (values.size > 2) then {
-                    vararg := values[3]
-                }
-            }
-        }
+class signaturePart.new(*values) {
+    var name := ""
+    var params := []
+    var vararg := false
+    var generics := []
+    if (values.size > 0) then {
+        name := values[1]
+    }
+    if (values.size > 1) then {
+        params := values[2]
+    }
+    if (values.size > 2) then {
+        vararg := values[3]
     }
 }
-
-// class signaturePart.new(*values) {
-//     var name := ""
-//     var params := []
-//     var vararg := false
-//     if (values.size > 0) then {
-//         name := values[1]
-//     }
-//     if (values.size > 1) then {
-//         params := values[2]
-//     }
-//     if (values.size > 2) then {
-//         vararg := values[3]
-//     }
-// }
 
 method callWithPart {
     object {
@@ -1462,6 +1471,7 @@ type ASTVisitor = {
      visitImport(o) -> Boolean
      visitReturn(o) -> Boolean
      visitInherits(o) -> Boolean
+     visitDialect(o) -> Boolean
 }
 method baseVisitor -> ASTVisitor {
     object {
@@ -1546,5 +1556,37 @@ method baseVisitor -> ASTVisitor {
         method visitInherits(o) -> Boolean {
             true
         }
+        method visitDialect(o) -> Boolean {
+            true
+        }
     }
+}
+
+method findAnnotation(node, annName) {
+    for (node.annotations) do {ann->
+        if ((ann.kind == "identifier").andAlso {
+            ann.value == annName }) then {
+            return object {
+                inherits true
+                def value is public = ann
+            }
+        }
+    }
+    false
+}
+
+method isPublic(node) {
+    if ((node.annotations.size == 0).orElse {
+        findAnnotation(node, "public")}) then {
+        return true
+    }
+    false
+}
+
+method isWritable(node) {
+    if ((node.annotations.size == 0).orElse {
+        findAnnotation(node, "writable")}) then {
+        return true
+    }
+    false
 }

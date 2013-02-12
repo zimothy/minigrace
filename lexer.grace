@@ -1,9 +1,9 @@
 #pragma DefaultVisibility=public
-import io
-import sys
-import util
-import unicode
-import mgcollections
+def io = platform.io
+def sys = platform.sys
+def util = platform.util
+def unicode = platform.unicode
+def mgcollections = platform.mgcollections
 
 def collections = mgcollections
 
@@ -195,7 +195,8 @@ def LexerClass = object {
                             || (accum == "var") || (accum == "type")
                             || (accum == "import") || (accum == "class")
                             || (accum == "return") || (accum == "def")
-                            || (accum == "inherits") || (accum == "is")) then {
+                            || (accum == "inherits") || (accum == "is")
+                            || (accum == "dialect")) then {
                             tok := KeywordToken.new(accum)
                         }
                         tokens.push(tok)
@@ -361,7 +362,7 @@ def LexerClass = object {
             method isoperatorchar(c, ordval) {
                 var ret := false
                 if ((c == "-") || (c == "&") || (c == "||") || (c == ":")
-                    || (c == "%") || (c == "^")
+                    || (c == "%") || (c == "^") || (c == "@")
                     || (c == "*") || (c == "/") || (c == "+") || (c == "!")
                     ) then {
                     ret := true

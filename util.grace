@@ -1,7 +1,7 @@
 #pragma DefaultVisibility=public
-import io
-import sys
-import buildinfo
+def io = platform.io
+def sys = platform.sys
+def buildinfo = platform.buildinfo
 
 var __compilerRevision := false
 var verbosityv := 30
@@ -10,13 +10,14 @@ var infilev := io.input
 var modnamev := "stdin_minigrace"
 var runmodev := "make"
 var buildtypev := "run"
+var interactivev := false
 var gracelibPathv := false
 var linenumv := 1
 var lineposv := 1
 var vtagv := false
 var noexecv := false
 var targetv := "c"
-var versionNumber := "0.0.7"
+var versionNumber := "0.0.8"
 var extensionsv := HashMap.new
 var recurse := true
 var dynamicModule := false
@@ -25,8 +26,10 @@ var jobs := 2
 var cLines := []
 var lines := []
 
+var errno := 0
+
 method runOnNew(b)else(e) {
-    if ((__compilerRevision != "672d7488e743e6714989f56a577f31a70c0f6e5e")
+    if ((__compilerRevision != "d5f6522d5c5e3f5b1f40d77502a66954955d0e5a")
         && (__compilerRevision != false)) then {
         b.apply
     } else {
@@ -75,6 +78,8 @@ method parseargs {
                         runmodev := "build"
                     } case { "--native" ->
                         buildtypev := "native"
+                    } case { "--interactive" ->
+                        interactivev := true
                     } case { "--noexec" ->
                         noexecv := true
                     } case { "--yesexec" ->
@@ -156,8 +161,10 @@ method parseargs {
             print("This is free software with ABSOLUTELY NO WARRANTY. "
                 ++ "Say minigrace.w for details.")
             print ""
-            print "Enter a program and press Ctrl-D to execute it."
-            print ""
+            if (interactivev.not) then {
+                print "Enter a program and press Ctrl-D to execute it."
+                print ""
+            }
         }
     }
 }
@@ -196,7 +203,11 @@ method syntax_error(s) {
     if (linenumv < lines.size) then {
         io.error.write("  {linenumv + 1}: {lines.at(linenumv + 1)}\n")
     }
-    sys.exit(1)
+    if (interactivev.not) then {
+        sys.exit(1)
+    } else {
+        errno := 1
+    }
 }
 method type_error(s) {
     if (extensionsv.contains("IgnoreTypes")) then {
@@ -208,7 +219,11 @@ method type_error(s) {
     io.error.write("{modnamev}.grace:{linenumv}:{lineposv}: Type error: {s}")
     io.error.write("\n")
     io.error.write(lines.at(linenumv) ++ "\n")
-    sys.exit(1)
+    if (interactivev.not) then {
+        sys.exit(1)
+    } else {
+        errno := 1
+    }
 }
 method warning(s) {
     io.error.write("{modnamev}.grace:{linenumv}:{lineposv}: warning: {s}")
@@ -232,6 +247,9 @@ method runmode {
 }
 method buildtype {
     buildtypev
+}
+method interactive {
+    interactivev
 }
 method gracelibPath {
     gracelibPathv
@@ -291,6 +309,7 @@ method printhelp {
     print "  --run            Compile FILE and execute the program [default]"
     print "  --source         Compile FILE to source, but no further"
     print "  --dynamic-module Compile FILE as a dynamic module (experimental!)"
+    print "  --interactive    Launch interactive read-eval-print interpreter"
     print ""
     print "Options:"
     print "  --verbose        Give more detailed output"
@@ -334,4 +353,21 @@ method join(joiner, iterable) {
         s := s ++ iterable.at(i)
     }
     s
+}
+
+method split(str, by) {
+    def results = []
+    def bylen = by.size
+    var start := 1
+    var i := 1
+    def strlen = str.size
+    while {i <= strlen} do {
+        if (str.substringFrom(i)to(i+bylen-1) == by) then {
+            results.push(str.substringFrom(start)to(i-1))
+            start := i + bylen
+        }
+        i := i + 1
+    }
+    results.push(str.substringFrom(start)to(strlen))
+    results
 }

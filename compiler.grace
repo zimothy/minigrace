@@ -1,18 +1,18 @@
 #pragma DefaultVisibility=public
-import io
-import sys
-import unicode
-import util
-import lexer
-import ast
-import parser
-import typechecker
-import utils
-import genc
-import genjs
-import buildinfo
-import subtype
-import mgcollections
+import "io" as io
+import "sys" as sys
+import "unicode" as unicode
+import "util" as util
+import "lexer" as lexer
+import "ast" as ast
+import "parser" as parser
+import "typechecker" as typechecker
+import "genc" as genc
+import "genjs" as genjs
+import "buildinfo" as buildinfo
+def subtype = platform.subtype
+import "mgcollections" as mgcollections
+import "interactive" as interactive
 
 util.parseargs
 
@@ -24,6 +24,11 @@ if (util.target == "help") then {
     for (targets) do {t->
         print("  {t}")
     }
+    sys.exit(0)
+}
+
+if (util.interactive) then {
+    interactive.startRepl
     sys.exit(0)
 }
 
@@ -52,6 +57,9 @@ if (util.target == "grace") then {
         print(v.toGrace(0))
     }
     sys.exit(0)
+}
+if (util.target == "c") then {
+    genc.processImports(values)
 }
 values := typechecker.typecheck(values)
 if (util.target == "processed-ast") then {

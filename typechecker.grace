@@ -1,8 +1,10 @@
 #pragma DefaultVisibility=public
-import io
-import ast
-import util
-import subtype
+def io = platform.io
+def ast = platform.ast
+def util = platform.util
+def subtype = platform.subtype
+import "xmodule" as xmodule
+import "mgcollections" as collections
 
 def preludeObj = HashMap.new
 def moduleScope = HashMap.new
@@ -28,6 +30,7 @@ def NumberType = ast.typeNode.new("Number", [
     ast.methodTypeNode.new("*", [ast.signaturePart.new("*", [NumberOther])], NumberIdentifier),
     ast.methodTypeNode.new("-", [ast.signaturePart.new("-", [NumberOther])], NumberIdentifier),
     ast.methodTypeNode.new("/", [ast.signaturePart.new("/", [NumberOther])], NumberIdentifier),
+    ast.methodTypeNode.new("^", [ast.signaturePart.new("^", [NumberOther])], NumberIdentifier),
     ast.methodTypeNode.new("%", [ast.signaturePart.new("%", [NumberOther])], NumberIdentifier),
     ast.methodTypeNode.new("==", [ast.signaturePart.new("==", [TopOther])], BooleanIdentifier),
     ast.methodTypeNode.new("!=", [ast.signaturePart.new("!=", [TopOther])], BooleanIdentifier),
@@ -39,6 +42,8 @@ def NumberType = ast.typeNode.new("Number", [
     ast.methodTypeNode.new("..", [ast.signaturePart.new("..", [NumberOther])], DynamicIdentifier),
     ast.methodTypeNode.new("asString", [ast.signaturePart.new("asString")], StringIdentifier),
     ast.methodTypeNode.new("prefix-", [ast.signaturePart.new("prefix-")], NumberIdentifier),
+    ast.methodTypeNode.new("prefix<", [ast.signaturePart.new("prefix<")], DynamicIdentifier),
+    ast.methodTypeNode.new("prefix>", [ast.signaturePart.new("prefix>")], DynamicIdentifier),
     ast.methodTypeNode.new("inBase", [ast.signaturePart.new("inBase", [NumberOther])], StringIdentifier),
     ast.methodTypeNode.new("truncate", [ast.signaturePart.new("truncate")], NumberIdentifier),
     ast.methodTypeNode.new("match", [ast.signaturePart.new("match", [TopOther])], DynamicIdentifier),
@@ -404,9 +409,9 @@ method expressionType(expr) {
             }
         }
         objectmeths.push(ast.methodTypeNode.new("==",
-            [ast.signaturePart.new("==")], BooleanIdentifier))
+            [ast.signaturePart.new("==", [TopOther])], BooleanIdentifier))
         objectmeths.push(ast.methodTypeNode.new("!=",
-            [ast.signaturePart.new("!=")], BooleanIdentifier))
+            [ast.signaturePart.new("!=", [TopOther])], BooleanIdentifier))
         objectmeths.push(ast.methodTypeNode.new("asString",
             [ast.signaturePart.new("asString")], StringIdentifier))
         objectmeths.push(ast.methodTypeNode.new("asDebugString",
@@ -671,6 +676,10 @@ method rewritematchblockterm(arg) {
     if (arg.kind == "boolean") then {
         return [arg, []]
     }
+    if ((arg.kind == "call").andAlso {arg.value.value.substringFrom(1)to(6)
+        == "prefix"}) then {
+        return [arg, []]
+    }
     if (arg.kind == "call") then {
         def bindings = []
         def subpats = []
@@ -733,6 +742,9 @@ method rewritematchblockterm(arg) {
             return [bindingpat, bindings]
         }
         return [varpat, [arg]]
+    }
+    if (arg.kind == "type") then {
+        return [arg, []]
     }
 }
 method rewritematchblock(blk) {
@@ -923,6 +935,16 @@ method resolveIdentifiers(node) {
                     ++ "{realType.value} from method of return type "
                     ++ currentReturnType.value)
             }
+            if (lastStatement.kind == "object") then {
+                node.properties.put("fresh", realType)
+            } else {
+                if (lastStatement.kind == "return") then {
+                    if (lastStatement.value.kind == "object") then {
+                        node.properties.put("fresh",
+                            expressionType(lastStatement.value))
+                    }
+                }
+            }
         }
         currentReturnType := oldReturnType
         popScope
@@ -932,6 +954,7 @@ method resolveIdentifiers(node) {
         tmp.generics := node.generics
         tmp.annotations.extend(node.annotations)
         tmp.varargs := node.varargs
+        tmp.properties := node.properties
         return tmp
     }
     if (node.kind == "block") then {
@@ -968,10 +991,12 @@ method resolveIdentifiers(node) {
         return tmp2
     }
     if (node.kind == "inherits") then {
-        def csupertype = expressionType(resolveIdentifiers(node.value))
+        tmp := resolveIdentifiers(node.value)
+        def csupertype = expressionType(tmp)
         for (csupertype.methods) do { m->
             scopes.last.put(m.value, Binding.new("method"))
         }
+        return ast.inheritsNode.new(tmp)
     }
     if (node.kind == "class") then {
         pushScope
@@ -1027,6 +1052,7 @@ method resolveIdentifiers(node) {
         tmp := ast.classNode.new(node.name, tmp3, tmp2,
             resolveIdentifiers(node.superclass), node.constructor)
         tmp.generics := node.generics
+        tmp.instanceMethods := node.instanceMethods
         node := tmp
         popScope
         selftypes.pop
@@ -1074,6 +1100,14 @@ method resolveIdentifiers(node) {
                 for (mt.signature.indices) do { partnr ->
                     var part := mt.signature[partnr]
                     var tmpparams := []
+                    for (part.generics) do { e ->
+                        def btmp = Binding.new("type")
+                        def nom = ast.typeNode.new(e.value, [])
+                        nom.nominal := true
+                        subtype.addType(nom)
+                        btmp.value := nom
+                        bindName(e.value, btmp)
+                    }
                     for (part.params) do { e ->
                         e.dtype := resolveIdentifiers(e.dtype)
                         bindIdentifier(e)
@@ -1385,6 +1419,10 @@ method resolveIdentifiersListReal(lst)withBlock(bk) {
                 ast.methodTypeNode.new(e.constructor.value, e.signature,
                     classInstanceType)
             ])
+            def tmpM = e.instanceMethods
+            for (classInstanceType.methods) do {md->
+                tmpM.push(md)
+            }
             classItselfType.generics := classGenerics
             subtype.addType(classInstanceType)
             subtype.addType(classItselfType)
@@ -1392,8 +1430,77 @@ method resolveIdentifiersListReal(lst)withBlock(bk) {
             bindName(className, tmp)
         } elseif (e.kind == "import") then {
             tmp := Binding.new("def")
-            tmp.dtype := DynamicType
-            bindName(e.value.value, tmp)
+            def gct = xmodule.parseGCT(e.path, "/nosuchpath")
+            def classes = collections.map.new
+            if (gct.contains("classes")) then {
+                for (gct.get("classes")) do {c->
+                    def cmeths = []
+                    def constrs = gct.get("constructors-of:{c}")
+                    for (constrs) do {constr->
+                        def cparts = []
+                        for (util.split(constr, "()")) do {pn->
+                            cparts.push(ast.signaturePart.new(pn))
+                        }
+                        def meths = collections.list.new
+                        for (gct.get("methods-of:{c}.{constr}")) do {mn->
+                            def parts = []
+                            for (util.split(mn, "()")) do {pn->
+                                parts.push(ast.signaturePart.new(pn))
+                            }
+                            meths.push(ast.methodTypeNode.new(mn, parts,
+                                DynamicType))
+                        }
+                        def itype = ast.typeNode.new(
+                            "InstanceOf<{e.value}.{c}.{constr}>", meths)
+                        def cmeth = ast.methodTypeNode.new(constr, cparts,
+                            itype)
+                        cmeths.push(cmeth)
+                    }
+                    def ctype = ast.typeNode.new("ClassOf<{e.value}.{c}>",
+                        cmeths)
+                    classes.put(c, ctype)
+                }
+            }
+            def freshmeths = collections.map.new
+            if (gct.contains("fresh-methods")) then {
+                for (gct.get("fresh-methods")) do {c->
+                    def cparts = []
+                    def meths = collections.list.new
+                    for (gct.get("fresh:{c}")) do {mn->
+                        def parts = []
+                        for (util.split(mn, "()")) do {pn->
+                            parts.push(ast.signaturePart.new(pn))
+                        }
+                        meths.push(ast.methodTypeNode.new(mn, parts,
+                            DynamicType))
+                    }
+                    def itype = ast.typeNode.new("InstanceOf<{e.value}.{c}>",
+                        meths)
+                    freshmeths.put(c, itype)
+                }
+            }
+            if (gct.contains("public")) then {
+                def meths = collections.list.new
+                for (gct.get("public")) do {mn->
+                    def parts = []
+                    for (util.split(mn, "()")) do {pn->
+                        parts.push(ast.signaturePart.new(pn))
+                    }
+                    var rtype := DynamicType
+                    if (classes.contains(mn)) then {
+                        rtype := classes.get(mn)
+                    }
+                    if (freshmeths.contains(mn)) then {
+                        rtype := freshmeths.get(mn)
+                    }
+                    meths.push(ast.methodTypeNode.new(mn, parts, rtype))
+                }
+                def mtype = ast.typeNode.new("<Module {e.value}>", meths)
+                tmp.dtype := mtype
+            } else {
+                tmp.dtype := DynamicType
+            }
+            bindName(e.value, tmp)
         }
     }
     for (lst) do {e->
@@ -1415,8 +1522,27 @@ method typecheck(values, *sc) {
     util.log_verbose("typechecking.")
     if (!initDone) then {
         if (!util.extensions.contains("NativePrelude")) then {
-            for (prelude._methods) do {mn->
-                preludeObj.put(mn, Binding.new("method"))
+            var hadDialect := false
+            for (values) do {val->
+                if (val.kind == "dialect") then {
+                    hadDialect := true
+                    def data = xmodule.parseGCT(val.value, "/nosuchfile")
+                    if (data.contains("public")) then {
+                        for (data.get("public")) do {mn->
+                            preludeObj.put(mn, Binding.new("method"))
+                        }
+                    }
+                    if (data.contains("confidential")) then {
+                        for (data.get("confidential")) do {mn->
+                            preludeObj.put(mn, Binding.new("method"))
+                        }
+                    }
+                }
+            }
+            if (!hadDialect) then {
+                for (prelude._methods) do {mn->
+                    preludeObj.put(mn, Binding.new("method"))
+                }
             }
         }
         var btmp
