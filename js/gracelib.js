@@ -457,6 +457,9 @@
             method("%", function(self, other) {
                 return self % asNumber(other);
             }, [numberType]);
+            method("^", function(self, other) {
+                return Math.pow(self, asNumber(other));
+            }, [numberType]);
             method("++", function(self, other) {
                 return self.toString() + asString(other);
             }, [objectType]);
@@ -905,7 +908,6 @@
     var calln = makeCallWith();
 
     function makeCallWith() {
-
         var src = arguments;
         var Line = src.length > 0 ? function(number) {
             this.number = number;
@@ -916,7 +918,7 @@
 
         return function(object, name, context, line) {
             if (object === null) {
-                calln(nothingError, "raise()onLine", prelude)
+                nothingError["raise()onLine"]
                     ("Cannot call method on nothing")(new Line(line));
             }
 
@@ -930,12 +932,12 @@
                 if (object != null && object[name] != null) {
                     if (context !== object) {
                         var access = object[name].access || "confidential";
-                        calln(methodAccessError, "raise()onLine", prelude)
+                        methodAccessError["raise()onLine"]
                             ("Improper access to " + access + " method " + name)
                             (new Line(line));
                     }
                 } else {
-                    var ex = calln(noSuchMethodError, "raise()onLine", prelude)
+                    noSuchMethodError["raise()onLine"]
                         ("No such method " + name)(new Line(line));
                 }
             }

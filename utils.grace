@@ -1,5 +1,5 @@
 // Maps a list to a new one with the given block.
-method map(list) with(with: Block) -> List is public {
+method map(list) with(with) -> List is public {
     def list' = []
     var index := 1
     def break = { return list' }
@@ -16,7 +16,7 @@ method map(list) with(with: Block) -> List is public {
 }
 
 // Filters out elements from a list with the given block.
-method filter(list : List) with(choice : Block) -> List is public {
+method filter(list : List) with(choice) -> List is public {
     def list' = []
     def break = { return list' }
     for(list) do { e ->
@@ -30,8 +30,7 @@ method filter(list : List) with(choice : Block) -> List is public {
 
 // Maps a list to a new one with the given block and filter.
 // More efficient but equivalent to filter(map(list) with(with)) with(filter).
-method map(list : List) with(with : Block)
-       filter(filter : Block) -> List is public {
+method map(list : List) with(with) filter(filter) -> List is public {
     def list' = []
     var index := 1
     def break = { return list' }
@@ -49,7 +48,7 @@ method map(list : List) with(with : Block)
 
 // Folds the elements of the list into a new value using the given function.
 // The function should take the accumulator first, and the current value second.
-method fold(list, start) with(with : Block) is public {
+method fold(list, start) with(with) is public {
     var accum := start
 
     for(list) do { value ->
@@ -171,21 +170,20 @@ method split(iter) at(element) using(fst, snd, add) {
 }
 
 // Splits a string in two using a test function.
-method splitString(string : String) with(test : Block) is public {
+method splitString(string : String) with(test) is public {
     split(string) with(test) using("", "", { string', value ->
         string' ++ value
     })
 }
 
 // Splits a list in two using a test function.
-method splitList(list) with(test : Block) is public {
-    print("boop")
+method splitList(list) with(test) is public {
     split(list) with(test) using([], [], { list', value ->
         list'.push(value)
     })
 }
 
-method split(iter) with(test : Block) using(fst, snd, add) {
+method split(iter) with(test) using(fst, snd, add) {
     for(iter) do { value ->
         add.apply(if(test.apply(value)) then {
             fst
@@ -260,7 +258,7 @@ method isSublist(sublist) of(list) -> Boolean is public {
 }
 
 // Tests if the given block is true for at least one element of the list.
-method for(list) some(test : Block) -> Boolean is public {
+method for(list) some(test) -> Boolean is public {
     for(list) do { value ->
         if(test.apply(value)) then {
             return true
@@ -271,7 +269,7 @@ method for(list) some(test : Block) -> Boolean is public {
 }
 
 // Tests if the given block is true for all of the elements of the list.
-method for(list) all(test : Block) -> Boolean is public {
+method for(list) all(test) -> Boolean is public {
     for(list) do { value ->
         if(test.apply(value).not) then {
             return false
@@ -282,6 +280,6 @@ method for(list) all(test : Block) -> Boolean is public {
 }
 
 // Tests if the given block is true for none of the elements of the list.
-method for(list) none(test : Block) -> Boolean is public {
+method for(list) none(test) -> Boolean is public {
     for(list) some(test).not
 }

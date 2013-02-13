@@ -106,11 +106,7 @@ class javascriptCompiler.new(outFile) {
                     line("return grace.modules[name]()")
                 }, "}")
                 if(noMain.not) then {
-                    wrapln("try \{", {
-                        line("getInstance()")
-                    }, "\} catch(e) \{", {
-                        line("console.error(e.stackTrace())")
-                    }, "}")
+                    line("getInstance()")
                 }
             }, "\} else \{", {
                 line("grace = require(\"gracelib\")")
@@ -120,11 +116,11 @@ class javascriptCompiler.new(outFile) {
                     line("prelude = require(\"StandardPrelude\")")
                 }
                 line("doImport = require")
-                wrapln("try \{", {
-                    line("module.exports = getInstance()")
-                }, "\} catch(e) \{", {
-                    line("console.error(e)")
-                }, "\}")
+                wrapln("process.on('uncaughtException', function(err) \{", {
+                    line("console.error(err.name() + ': ' + err.message())")
+                    line("process.exit(-1);")
+                }, "\})")
+                line("module.exports = getInstance()")
             }, "\}")
 
         }, "\})()")
