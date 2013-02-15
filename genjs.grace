@@ -1,8 +1,11 @@
-import "ast" as ast
-import "sys" as sys
+import "ast"     as ast
+import "io"      as io
+import "sys"     as sys
 import "unicode" as unicode
+import "utils"   as utils
+
+// Won't compile with the new import syntax.
 def util = platform.util
-import "utils" as utils
 
 // The name for this is prone to change, so it makes sense to centralize it.
 def unitValue = "prelude.done()"
@@ -10,23 +13,68 @@ def unitValue = "prelude.done()"
 // Native operations.
 def nativeOps = ["method", "object", "type", "varargs", "match", "pattern"]
 
+// Native modules.
+def nativeModules =
+    ["interactive", "io", "js", "mirrors", "sys", "unicode", "StandardPrelude"]
+
 // Compiles the given nodes into a module with the given name.
 method compile(nodes : List, outFile, moduleName : String, runMode : String,
                buildType : String, libPath : String) is public {
     util.log_verbose("generating ECMAScript code.")
 
     def compiler = javascriptCompiler.new(outFile)
-    def split = utils.splitList(nodes) with { node -> node.kind == "import" }
+    def split = utils.splitList(nodes) with { node ->
+        (node.kind == "import") || (node.kind == "dialect")
+    }
 
     moduleName := moduleName.replace("/") with(".")
 
-    var imports := utils.map(split.wasTrue) with { node -> node.value }
+    def imports = split.wasTrue
+
+    if(runMode == "make") then {
+        util.log_verbose("checking imports")
+        for(imports) do { node ->
+            def path = if(node.kind == "import")
+                then { node.path } else { node.kind }
+
+            if(nativeModules.contains(path).not) then {
+                def js = "{path}.js"
+                def grace = "{path}.grace"
+
+                if(io.exists(grace).not) then {
+                    util.syntax_error("failed finding import of {path}")
+                }
+
+                if(io.exists(js).not || { io.newer(grace, js) }) then {
+                    def cmd = sys.argv.first
+                    def process = if(util.verbosity > 30) then {
+                        io.spawn(cmd, "--make", "--target", "js", "--verbose",
+                            grace)
+                    } else {
+                        io.spawn(cmd, "--make", "--target", "js", grace)
+                    }
+
+                    if(process.success.not) then {
+                        util.syntax_error("failed processing import of {path}")
+                    }
+                }
+            }
+        }
+    }
 
     compiler.compileModule(moduleName, imports, split.wasFalse, libPath)
 
     outFile.close
 
     util.log_verbose("done.")
+
+    if(buildType == "run") then {
+        def cmd = "node {moduleName}"
+        if (io.spawn(cmd).success.not) then {
+            io.error.write(
+                "minigrace: Program exited with error: {moduleName}\n")
+        }
+    }
 }
 
 class javascriptCompiler.new(outFile) {
@@ -70,9 +118,8 @@ class javascriptCompiler.new(outFile) {
 
                 // The imports need to be inside this function to allow the
                 // outer closure to run correctly.
-                for(imports) do { m ->
-                    def module = m.value
-                    line("var {module} = doImport(\"{module}\")")
+                for(imports) do { node ->
+                    line("var {node.value} = doImport(\"{node.path}\")")
                 }
 
                 line("var self = prelude, outer")

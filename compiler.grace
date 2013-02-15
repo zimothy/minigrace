@@ -13,6 +13,7 @@ import "buildinfo" as buildinfo
 def subtype = platform.subtype
 import "mgcollections" as mgcollections
 import "interactive" as interactive
+import "utils" as utils
 
 util.parseargs
 
