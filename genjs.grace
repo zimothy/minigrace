@@ -19,7 +19,7 @@ def nativeModules =
 
 // Compiles the given nodes into a module with the given name.
 method compile(nodes : List, outFile, moduleName : String, runMode : String,
-               buildType : String, libPath : String) is public {
+        buildType : String, libPath : String) is public {
     util.log_verbose("generating ECMAScript code.")
 
     def compiler = javascriptCompiler.new(outFile)
@@ -69,8 +69,7 @@ method compile(nodes : List, outFile, moduleName : String, runMode : String,
     util.log_verbose("done.")
 
     if(buildType == "run") then {
-        def cmd = "node {moduleName}"
-        if (io.spawn(cmd).success.not) then {
+        if (io.spawn("node", moduleName).success.not) then {
             io.error.write(
                 "minigrace: Program exited with error: {moduleName}\n")
         }
