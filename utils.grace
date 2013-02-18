@@ -1,3 +1,6 @@
+import "StandardPrelude" as sprelude
+def parent is parent = sprelude
+
 // Maps a list to a new one with the given block.
 method map(list) with(with) -> List is public {
     def list' = []

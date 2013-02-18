@@ -1,8 +1,9 @@
+dialect "utils"
+
 import "ast"     as ast
 import "io"      as io
 import "sys"     as sys
 import "unicode" as unicode
-import "utils"   as utils
 
 // Won't compile with the new import syntax.
 def util = platform.util
@@ -23,7 +24,7 @@ method compile(nodes : List, outFile, moduleName : String, runMode : String,
     util.log_verbose("generating ECMAScript code.")
 
     def compiler = javascriptCompiler.new(outFile)
-    def split = utils.splitList(nodes) with { node ->
+    def split = splitList(nodes) with { node ->
         (node.kind == "import") || (node.kind == "dialect") || {
             // This assumes that platform is being replaced by import, because
             // it's not a comprehensive lookup for it.
@@ -39,7 +40,7 @@ method compile(nodes : List, outFile, moduleName : String, runMode : String,
 
     moduleName := moduleName.replace("/") with(".")
 
-    def imports = utils.map(split.wasTrue) with { node ->
+    def imports = map(split.wasTrue) with { node ->
         if(node.kind == "defdec") then {
             ast.importNode.new(node.value.value, node.name.value)
         } else {
@@ -268,11 +269,11 @@ class javascriptCompiler.new(outFile) {
         write(indent)
         write("$method(self, \"{name}\", function(")
 
-        for(utils.fold(sig, []) with { params, part ->
+        for(fold(sig, []) with { params, part ->
             if(part.vararg != false) then {
-                utils.concat(params, part.params, [part.vararg])
+                concat(params, part.params, [part.vararg])
             } else {
-                utils.concat(params, part.params)
+                concat(params, part.params)
             }
         }) do { param ->
             compileExpression(param)
@@ -321,7 +322,7 @@ class javascriptCompiler.new(outFile) {
             compileExpression(node.value)
         })
 
-        if(utils.for(node.annotations) some { annotation ->
+        if(for(node.annotations) some { annotation ->
             annotation.value == "readable"
         }) then {
             compileGetter(name, escaped, access, "def")
@@ -341,13 +342,13 @@ class javascriptCompiler.new(outFile) {
             }
         })
 
-        if(utils.for(node.annotations) some { annotation ->
+        if(for(node.annotations) some { annotation ->
             annotation.value == "readable"
         }) then {
             compileGetter(name, escaped, access, "var")
         }
 
-        if(utils.for(node.annotations) some { annotation ->
+        if(for(node.annotations) some { annotation ->
             annotation.value == "writable"
         }) then {
             wrapLine("$method(self, \"{name}:=\", function(value) \{", {
@@ -600,7 +601,7 @@ class javascriptCompiler.new(outFile) {
 
     method compileMatch(node) {
         def hasElse = node.elsecase != false
-        def name = "match()case" ++ utils.stringIf(hasElse) then { "()else" }
+        def name = "match()case" ++ stringIf(hasElse) then { "()else" }
 
         write("$call(prelude, \"{name}\", self, {node.line})(")
         compileExpression(node.value)
@@ -622,7 +623,7 @@ class javascriptCompiler.new(outFile) {
     // Compiles a catch-case statement.
     method compileCatchCase(node) {
         def hasFin = node.finally != false
-        def name = "catch()case" ++ utils.stringIf(hasFin) then { "()finally" }
+        def name = "catch()case" ++ stringIf(hasFin) then { "()finally" }
         write("$call(prelude, \"{name}\", self, {node.line})(")
         compileExpression(node.value)
         write(")(")
@@ -715,7 +716,7 @@ class javascriptCompiler.new(outFile) {
         write(indent)
 
         if(rest.size > 1) then {
-            wrap'(rest.at(1), rest.at(2), utils.sublistOf(rest) from(3))
+            wrap'(rest.at(1), rest.at(2), sublistOf(rest) from(3))
         } elseif(rest.size == 1) then {
             writeOrApply(rest.first)
         }
@@ -790,7 +791,7 @@ method escapeIdentifier(identifier : String) -> String {
 }
 
 method getAccess(node) -> String {
-    def accesses = utils.filter(node.annotations) with { annotation ->
+    def accesses = filter(node.annotations) with { annotation ->
         def value = annotation.value
         (value == "public") || (value == "confidential") ||
             (value == "private")
