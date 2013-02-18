@@ -14,8 +14,8 @@ def unitValue = "prelude.done()"
 def nativeOps = ["method", "object", "type", "varargs", "match", "pattern"]
 
 // Native modules.
-def nativeModules =
-    ["interactive", "io", "js", "mirrors", "sys", "unicode", "StandardPrelude"]
+def nativeModules = ["interactive", "io", "js", "mirrors", "sys", "repl",
+    "unicode", "StandardPrelude"]
 
 // Compiles the given nodes into a module with the given name.
 method compile(nodes : List, outFile, moduleName : String, runMode : String,
@@ -24,12 +24,28 @@ method compile(nodes : List, outFile, moduleName : String, runMode : String,
 
     def compiler = javascriptCompiler.new(outFile)
     def split = utils.splitList(nodes) with { node ->
-        (node.kind == "import") || (node.kind == "dialect")
+        (node.kind == "import") || (node.kind == "dialect") || {
+            // This assumes that platform is being replaced by import, because
+            // it's not a comprehensive lookup for it.
+            (node.kind == "defdec") && {
+                def value = node.value
+                (value.kind == "member") && {
+                    def in = value.in
+                    (in.kind == "identifier") && { in.value == "platform" }
+                }
+            }
+        }
     }
 
     moduleName := moduleName.replace("/") with(".")
 
-    def imports = split.wasTrue
+    def imports = utils.map(split.wasTrue) with { node ->
+        if(node.kind == "defdec") then {
+            ast.importNode.new(node.value.value, node.name.value)
+        } else {
+            node
+        }
+    }
 
     if(runMode == "make") then {
         util.log_verbose("checking imports")
@@ -45,6 +61,7 @@ method compile(nodes : List, outFile, moduleName : String, runMode : String,
                     util.syntax_error("failed finding import of {path}")
                 }
 
+                // TODO Make this concurrent.
                 if(io.exists(js).not || { io.newer(grace, js) }) then {
                     def cmd = sys.argv.first
                     def process = if(util.verbosity > 30) then {
@@ -101,7 +118,7 @@ class javascriptCompiler.new(outFile) {
                     write("${op} = grace.{op}, ")
                 }
 
-                wrap("$call = grace.call(", {
+                wrap("$call = grace.call(\"{name}\",\n", {
                     for(util.cLines) do { srcLine ->
                         write("{indent}\"")
                         for(srcLine) do { char ->
@@ -196,7 +213,7 @@ class javascriptCompiler.new(outFile) {
         } case { "inherits" ->
             // This is handled in object creation.
         } case { "type" ->
-            compileType(node)
+            compileTypeDecl(node)
         } case { "class" ->
             compileClass(node)
         } else {
@@ -218,19 +235,26 @@ class javascriptCompiler.new(outFile) {
         compileDef(defDec)
     }
 
-    // Compiles a type into a runtime object.
-    method compileType(node) {
+    // Compiles a type declaration.
+    method compileTypeDecl(node) {
         def name = node.value
         def escaped = escapeIdentifier(name)
 
-        write(indent ++ "var {escaped} = $type(")
+        write(indent ++ "var {escaped} = ")
+        compileType(node)
+        write(";\n")
+
+        // TODO Type nodes don't have annotations.
+        compileGetter(name, escaped, "public", "type");
+    }
+
+    // Compiles a type into a runtime object.
+    method compileType(node) {
+        write("$type(")
         for(node.methods) do { meth ->
             write("\"{meth.value}\"")
         } separatedBy(", ")
-        write(");\n")
-
-        // TODO Type nodes don't have annotations.
-        compileGetter(name, escaped, "public", "type")
+        write(")")
     }
 
     // Compiles a method by attaching a function definition to the current
@@ -421,6 +445,8 @@ class javascriptCompiler.new(outFile) {
             compileExpression(node.value)
         } case { "return" ->
             compileReturn(node)
+        } case { "type" ->
+            compileType(node)
         } else {
             print("Unrecognised expression `{node.kind}' on line {node.line}")
             sys.exit(1)

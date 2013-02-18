@@ -7,8 +7,6 @@
 *.gcn
 *.gct
 *.c
-java/*.java
-tests/*.java
 *.class
 l1
 l2
@@ -30,8 +28,5 @@ c/Makefile.conf
 c/bin
 Makefile.conf
 c/configure
-java/*.grace
 .directory-environ
 stdin_minigrace
-java/grace/lib/StandardPrelude.java
-java/grace/lib/StandardPrelude.grace

@@ -7,10 +7,12 @@
             method(self, "global", function() {
                 return global;
             }, "public", "def");
-
             method(self, "call()with", function(name, args) {
                 return global[name].apply(null, args);
             }, "public", [prelude.String()], varargs(prelude.Object()));
+            method(self, "eval", function(code) {
+                return eval(code);
+            }, "public", [prelude.String()]);
         });
     }
     function getInstance() {

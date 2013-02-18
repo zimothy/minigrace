@@ -1,35 +1,33 @@
-import js
-import mgcollections
+import "dom"           as dom
+import "js"            as js
+import "mgcollections" as collections
 
 def compiler = js.global.grace.modules["compiler"]
-def jQuery   = js.global["jQuery"]
-def eval     = js.global["eval"]
 
-method q(value) {
-    jQuery.apply(value)
-}
-
-q({
-    q("#compile").on("click", { compile })
-    q("#run").on("click", { run })
-    q("#compile-and-run").on("click", {
+dom.onReady {
+    dom.getById("compile").on("click") do { compile }
+    dom.getById("run").on("click") do { run }
+    dom.getById("compile-and-run").on("click") do {
         compile
         run
-    })
+    }
 
-    q("#test-cases").on("change", { loadTestCase })
-})
+    dom.getById("test-cases").on("change") do { loadTestCase }
+}
 
 method compile {
-    def source = q("#source").val
-    def target = q("#target").val
+    def source = dom.getById("source").value
+    def target = dom.getById("target").value
 
-    def stdout = q("#stdout").val("")
-    def stderr = q("#stderr").val("")
+    def stdout = dom.getById("stdout")
+    def stderr = dom.getById("stderr")
 
-    def extensions = mgcollections.map.new
+    stdout.value := ""
+    stderr.value := ""
 
-    def defaultVisibility = q("#default-visibility").val
+    def extensions = collections.map.new
+
+    def defaultVisibility = dom.getById("default-visibility").value
 
     if(defaultVisibility == "public-methods") then {
         extensions.put("DefaultVisibility", "confidential")
@@ -47,10 +45,8 @@ method compile {
 }
 
 method run {
-    eval.apply(q("#output").val)
+    js.eval(dom.getById("output").value)
 }
 
 method loadTestCase {}
-
-Exception.raise("Nope")
 

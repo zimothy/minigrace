@@ -730,18 +730,16 @@
                 throw self;
             });
             defineMethod(self, "asString", function() {
-                return name + ": " + message;
+                return name + ": " + message + "\n" + self.stackTrace();
             }, "public");
             defineMethod(self, "stackTrace", function() {
                 var out = "";
                 each(self.stack, function(i, line) {
-                    if (line.number) {
-                        out += line.number + ": " + line.content;
-                    } else {
-                        out += line.content;
-                    }
+                    out += "In " + line.module + (line.number ?
+                        ", line " + line.number + ": " +
+                        line.content.replace(/^\s+|\s+$/g, "") : "") + "\n";
                 });
-                return out;
+                return out.replace(/\n$/, "");
             }, "public");
         }
 
@@ -765,7 +763,7 @@
             var e = new Exception(message);
             e.stack.push(line);
             throw e;
-        }, "confidential", [stringType]);
+        }, "confidential", [stringType], [objectType]);
         return self;
     }
 
@@ -905,21 +903,22 @@
         return calln.apply(this, arguments)();
     }
 
-    var calln = makeCallWith();
+    var calln = callWith();
 
-    function makeCallWith() {
-        var src = arguments;
+    function callWith(module) {
+        var src = slice.call(arguments, 1);
         var Line = src.length > 0 ? function(number) {
+            this.module = module;
             this.number = number;
             this.content = src[number];
         } : function() {
-            this.content = "<native>";
+            this.module = "<native>";
         }
 
         return function(object, name, context, line) {
             if (object === null) {
                 nothingError["raise()onLine"]
-                    ("Cannot call method on nothing")(new Line(line));
+                    ("Called method '" + name + "' on nothing")(new Line(line));
             }
 
             var type = typeOf(object);
@@ -938,7 +937,8 @@
                     }
                 } else {
                     noSuchMethodError["raise()onLine"]
-                        ("No such method " + name)(new Line(line));
+                        ("No such method " + name + " in object " +
+                        call(object, "asDebugString", prelude))(new Line(line));
                 }
             }
 
@@ -991,7 +991,12 @@
                 return method;
             } else {
                 return function() {
-                    return method.apply(object, arguments);
+                    try {
+                        return method.apply(object, arguments);
+                    } catch (e) {
+                        e.stack.push(new Line(line));
+                        throw e;
+                    }
                 }
             }
         }
@@ -1140,7 +1145,7 @@
 
     var grace = {
         method:  defineMethod,
-        call:    makeCallWith,
+        call:    callWith,
         object:  function(self, outer, func, inherits) {
             var obj;
 
