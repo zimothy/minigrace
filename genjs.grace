@@ -9,12 +9,46 @@ import "unicode" as unicode
 def util = platform.util
 
 // Native operations.
-def nativeOps =
-    ["method", "object", "type", "varargs", "match", "pattern", "done"]
+def nativeOps = ["method", "object", "type", "varargs", "match", "pattern"]
 
 // Native modules.
 def nativeModules = ["interactive", "io", "js", "mirrors", "sys", "repl",
     "unicode", "StandardPrelude"]
+
+// Processes the imports of a module.
+method processImports(nodes : List) is public {
+    util.log_verbose("checking imports")
+
+    def imports = toImports(filter(nodes) with { node -> isImport(node) })
+    for(imports) do { node ->
+        def path = if(node.kind == "import")
+            then { node.path } else { node.kind }
+
+        if(nativeModules.contains(path).not) then {
+            def js = "{path}.js"
+            def grace = "{path}.grace"
+
+            if(io.exists(grace).not) then {
+                util.syntax_error("failed finding import of {path}")
+            }
+
+            // TODO Make this concurrent.
+            if(io.exists(js).not || { io.newer(grace, js) }) then {
+                def cmd = sys.argv.first
+                def process = if(util.verbosity > 30) then {
+                    io.spawn(cmd, "--make", "--target", "js", "--verbose",
+                        grace)
+                } else {
+                    io.spawn(cmd, "--make", "--target", "js", grace)
+                }
+
+                if(process.success.not) then {
+                    util.syntax_error("failed processing import of {path}")
+                }
+            }
+        }
+    }
+}
 
 // Compiles the given nodes into a module with the given name.
 method compile(nodes : List, outFile, moduleName : String, runMode : String,
@@ -22,61 +56,10 @@ method compile(nodes : List, outFile, moduleName : String, runMode : String,
     util.log_verbose("generating ECMAScript code.")
 
     def compiler = javascriptCompiler.new(outFile)
-    def split = splitList(nodes) with { node ->
-        (node.kind == "import") || (node.kind == "dialect") || {
-            // This assumes that platform is being replaced by import, because
-            // it's not a comprehensive lookup for it.
-            (node.kind == "defdec") && {
-                def value = node.value
-                (value.kind == "member") && {
-                    def in = value.in
-                    (in.kind == "identifier") && { in.value == "platform" }
-                }
-            }
-        }
-    }
+    def split = splitList(nodes) with { node -> isImport(node) }
+    def imports = toImports(split.wasTrue)
 
     moduleName := moduleName.replace("/") with(".")
-
-    def imports = map(split.wasTrue) with { node ->
-        if(node.kind == "defdec") then {
-            ast.importNode.new(node.value.value, node.name.value)
-        } else {
-            node
-        }
-    }
-
-    if(runMode == "make") then {
-        util.log_verbose("checking imports")
-        for(imports) do { node ->
-            def path = if(node.kind == "import")
-                then { node.path } else { node.kind }
-
-            if(nativeModules.contains(path).not) then {
-                def js = "{path}.js"
-                def grace = "{path}.grace"
-
-                if(io.exists(grace).not) then {
-                    util.syntax_error("failed finding import of {path}")
-                }
-
-                // TODO Make this concurrent.
-                if(io.exists(js).not || { io.newer(grace, js) }) then {
-                    def cmd = sys.argv.first
-                    def process = if(util.verbosity > 30) then {
-                        io.spawn(cmd, "--make", "--target", "js", "--verbose",
-                            grace)
-                    } else {
-                        io.spawn(cmd, "--make", "--target", "js", grace)
-                    }
-
-                    if(process.success.not) then {
-                        util.syntax_error("failed processing import of {path}")
-                    }
-                }
-            }
-        }
-    }
 
     compiler.compileModule(moduleName, imports, split.wasFalse, libPath)
 
@@ -88,6 +71,32 @@ method compile(nodes : List, outFile, moduleName : String, runMode : String,
         if (io.spawn("node", moduleName).success.not) then {
             io.error.write(
                 "minigrace: Program exited with error: {moduleName}\n")
+        }
+    }
+}
+
+// Evaluates whether the node contains an import.
+method isImport(node) -> Boolean {
+    (node.kind == "import") || (node.kind == "dialect") || {
+        // This assumes that platform is being replaced by import, because
+        // it's not a comprehensive lookup for it.
+        (node.kind == "defdec") && {
+            def value = node.value
+            (value.kind == "member") && {
+                def in = value.in
+                (in.kind == "identifier") && { in.value == "platform" }
+            }
+        }
+    }
+}
+
+// Transforms all 'defdec' nodes into import nodes. Maintains dialect.
+method toImports(nodes : List) -> List {
+    map(nodes) with { node ->
+        if(node.kind == "defdec") then {
+            ast.importNode.new(node.value.value, node.name.value)
+        } else {
+            node
         }
     }
 }
@@ -109,7 +118,7 @@ class javascriptCompiler.new(outFile) {
 
             line("var grace, doImport, instance, prelude, nothing")
 
-            wrapln("function makeModule(done) \{", {
+            wrapln("function makeModule(outer, $done, done) \{", {
 
                 write("{indent}var ")
 
@@ -117,7 +126,7 @@ class javascriptCompiler.new(outFile) {
                     write("${op} = grace.{op}, ")
                 }
 
-                wrap("$call = grace.call(\"{name}\",\n", {
+                wrap("$call = grace.call(\"{name}\",", {
                     for(util.cLines) do { srcLine ->
                         write("{indent}\"")
                         for(srcLine) do { char ->
@@ -134,10 +143,15 @@ class javascriptCompiler.new(outFile) {
                 // The imports need to be inside this function to allow the
                 // outer closure to run correctly.
                 for(imports) do { node ->
-                    line("var {node.value} = doImport(\"{node.path}\")")
+                    if(node.kind == "dialect") then {
+                        line("prelude = doImport(\"{node.value}\")")
+                    } else {
+                        line("var {node.value} = doImport(\"{node.path}\")")
+                    }
                 }
 
-                line("var self = prelude, outer")
+                // This just sets 'outer' correctly within the module.
+                line("var self = prelude")
 
                 // The module is compiled as a standard object.
                 statement("return ", {
@@ -161,9 +175,6 @@ class javascriptCompiler.new(outFile) {
                     line("prelude = grace.modules.StandardPrelude()")
                 }
                 line("grace.modules[\"{name}\"] = getInstance")
-                // TODO Temporary, until the module system settles down.
-                line("getInstance.reload = function() \{ instance = null; };")
-                line("getInstance.reload.access = \"public\"")
                 wrapLine("doImport = function(name) \{", {
                     line("return grace.modules[name]()")
                 }, "}")

@@ -1199,7 +1199,6 @@
             block.pattern = pattern;
             return block;
         },
-        done:    done,
         prelude: prelude
     };
 

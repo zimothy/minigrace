@@ -61,6 +61,8 @@ if (util.target == "grace") then {
 }
 if (util.target == "c") then {
     genc.processImports(values)
+} elseif(util.target == "js") then {
+    genjs.processImports(values)
 }
 values := typechecker.typecheck(values)
 if (util.target == "processed-ast") then {
