@@ -8,11 +8,9 @@ import "unicode" as unicode
 // Won't compile with the new import syntax.
 def util = platform.util
 
-// The name for this is prone to change, so it makes sense to centralize it.
-def unitValue = "prelude.done()"
-
 // Native operations.
-def nativeOps = ["method", "object", "type", "varargs", "match", "pattern"]
+def nativeOps =
+    ["method", "object", "type", "varargs", "match", "pattern", "done"]
 
 // Native modules.
 def nativeModules = ["interactive", "io", "js", "mirrors", "sys", "repl",
@@ -417,7 +415,7 @@ class javascriptCompiler.new(outFile) {
         } case { "bind" ->
             write("(")
             compileBind(node)
-            write(", {unitValue})")
+            write(", $done)")
         } case { "member" ->
             compileMember(node)
         } case { "call" ->
@@ -643,7 +641,7 @@ class javascriptCompiler.new(outFile) {
 
     method compileEagerBlock(body : List) {
         if(body.size == 0) then {
-            write(unitValue)
+            write("$done")
         } elseif((body.size == 1) && (body.first.kind != "return")) then {
             compileExpression(body.first)
         } else {

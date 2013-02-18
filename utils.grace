@@ -286,3 +286,4 @@ method for(list) all(test) -> Boolean is public {
 method for(list) none(test) -> Boolean is public {
     for(list) some(test).not
 }
+
