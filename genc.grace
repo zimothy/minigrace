@@ -1611,8 +1611,8 @@ method findPlatformUses(vals) {
     }
 }
 method parseGCT(path, filepath) {
-    xmodule.parseGCT(path,
-        filepath.replace(".gcn")with(".gct").replace(".gso")with(".gct"))
+    print("{path}, {filepath}")
+    xmodule.parseGCT(path)
 }
 method addTransitiveImports(filepath, epath) {
     def data = parseGCT(epath, filepath)
@@ -1778,7 +1778,7 @@ method processImports(values') {
                     util.setPosition(v.line, 1)
                     util.syntax_error("dialect '{nm}' failed to load: {e}")
                 } case { e : CheckerFailure ->
-                    if (nothing != e.data) then {
+                    if (done != e.data) then {
                         util.setPosition(e.data.line, e.data.linePos)
                     }
                     util.syntax_error("dialect failure: {e.message}")
@@ -1923,8 +1923,8 @@ method compile(vl, of, mn, rm, bt) {
     out("  *var_noSuchValue = none;")
     out("  Object *var_void = alloc_var();")
     out("  *var_void = none;")
-    out("  Object *var_nothing = alloc_var();")
-    out("  *var_nothing = none;")
+    out("  Object *var_done = alloc_var();")
+    out("  *var_done = none;")
     out("  Object *var_String = alloc_var();")
     out("  *var_String = String;")
     out("  type_String = String;")

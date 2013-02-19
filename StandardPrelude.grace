@@ -121,3 +121,9 @@ class OrPattern.new(p1, p2) {
         FailedMatch.new(o)
     }
 }
+
+def nothing is public = object {}
+type Nothing = singleton(nothing)
+
+type Maybe<T> is public = Nothing | T
+

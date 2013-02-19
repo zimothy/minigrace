@@ -117,11 +117,7 @@ def VoidType = ast.typeNode.new("Void", [
     ast.methodTypeNode.new("==", [ast.signaturePart.new("==", [TopOther])], BooleanIdentifier),
     ast.methodTypeNode.new("!=", [ast.signaturePart.new("!=", [TopOther])], BooleanIdentifier)
 ])
-def NothingType = ast.typeNode.new("Nothing", [
-    ast.methodTypeNode.new("==", [ast.signaturePart.new("==", [TopOther])], BooleanIdentifier),
-    ast.methodTypeNode.new("!=", [ast.signaturePart.new("!=", [TopOther])], BooleanIdentifier)
-])
-def NoneType = ast.typeNode.new("None", [
+def DoneType = ast.typeNode.new("Done", [
     ast.methodTypeNode.new("==", [ast.signaturePart.new("==", [TopOther])], BooleanIdentifier),
     ast.methodTypeNode.new("!=", [ast.signaturePart.new("!=", [TopOther])], BooleanIdentifier)
 ])
@@ -616,6 +612,10 @@ method findType(tp) {
         var gnm := gtnm ++ "<"
         if (gtg == false) then {
             util.type_error("could not find base type to instantiate: {gtnm}")
+            return tp
+        } elseif(gtg.generics.size == 0) then {
+            util.type_error("used non-generic type {gtnm} with generics")
+            return gtg
         }
         var methods := gtg.methods
         var tmprt
@@ -1226,6 +1226,10 @@ method resolveIdentifiers(node) {
         tmp := node.value
         tmp2 := resolveIdentifiers(tmp)
         tmp4 := resolveIdentifiers(node.dtype)
+        if(tmp4.kind == "generic") then {
+            util.type_error("generic types on defs not yet supported")
+            tmp4 := tmp4.value
+        }
         tmp3 := findType(tmp4)
         def tmp5 = expressionType(tmp2)
         if (conformsType(tmp5)to(tmp3).not) then {
@@ -1437,7 +1441,7 @@ method resolveIdentifiersListReal(lst)withBlock(bk) {
             bindName(className, tmp)
         } elseif (e.kind == "import") then {
             tmp := Binding.new("def")
-            def gct = xmodule.parseGCT(e.path, "/nosuchpath")
+            def gct = xmodule.parseGCT(e.path)
             def classes = collections.map.new
             if (gct.contains("classes")) then {
                 for (gct.get("classes")) do {c->
@@ -1525,6 +1529,21 @@ method resolveIdentifiersList(lst) {
 preludeObj.put("while()do", Binding.new("method"))
 preludeObj.put("for()do", Binding.new("method"))
 preludeObj.put("octets", Binding.new("method"))
+
+method addDialectMethods(path) {
+    def data = xmodule.parseGCT(path)
+    if (data.contains("public")) then {
+        for (data.get("public")) do { mn ->
+            preludeObj.put(mn, Binding.new("method"))
+        }
+    }
+    if (data.contains("confidential")) then {
+        for (data.get("confidential")) do { mn ->
+            preludeObj.put(mn, Binding.new("method"))
+        }
+    }
+}
+
 method typecheck(values, *sc) {
     if (util.extensions.contains("Plugin")) then {
         pluginHookSet := true
@@ -1537,23 +1556,11 @@ method typecheck(values, *sc) {
             for (values) do {val->
                 if (val.kind == "dialect") then {
                     hadDialect := true
-                    def data = xmodule.parseGCT(val.value, "/nosuchfile")
-                    if (data.contains("public")) then {
-                        for (data.get("public")) do {mn->
-                            preludeObj.put(mn, Binding.new("method"))
-                        }
-                    }
-                    if (data.contains("confidential")) then {
-                        for (data.get("confidential")) do {mn->
-                            preludeObj.put(mn, Binding.new("method"))
-                        }
-                    }
+                    addDialectMethods(val.value)
                 }
             }
             if (!hadDialect) then {
-                for (prelude._methods) do {mn->
-                    preludeObj.put(mn, Binding.new("method"))
-                }
+                addDialectMethods("StandardPrelude")
             }
         }
         var btmp
@@ -1562,19 +1569,19 @@ method typecheck(values, *sc) {
         bindName("escapestring", Binding.new("method"))
         def modtype = selftypes.last
         modtype.methods.push(ast.methodTypeNode.new("print",
-            [ast.signaturePart.new("print", [TopOther])], NoneType))
+            [ast.signaturePart.new("print", [TopOther])], DoneType))
         modtype.methods.push(ast.methodTypeNode.new("length",
             [ast.signaturePart.new("length", [TopOther])], NumberType))
         modtype.methods.push(ast.methodTypeNode.new("escapestring",
             [ast.signaturePart.new("escapestring", [StringOther])], StringType))
         modtype.methods.push(ast.methodTypeNode.new("raise",
-            [ast.signaturePart.new("raise", [TopOther])], NoneType))
+            [ast.signaturePart.new("raise", [TopOther])], DoneType))
         bindName("HashMap", Binding.new("def"))
         bindName("MatchFailed", Binding.new("def"))
         bindName("void", Binding.new("def"))
         btmp := Binding.new("def")
-        btmp.dtype := NothingType
-        bindName("nothing", btmp)
+        btmp.dtype := DoneType
+        bindName("done", btmp)
         bindName("true", Binding.new("def"))
         bindName("false", Binding.new("def"))
         bindName("...", Binding.new("def"))
@@ -1604,10 +1611,8 @@ method typecheck(values, *sc) {
         btmp.value := VoidType
         bindName("Void", btmp)
         btmp := Binding.new("type")
-        btmp.value := NothingType
-        bindName("Nothing", btmp)
-        btmp := Binding.new("type")
-        bindName("None", btmp)
+        btmp.value := DoneType
+        bindName("Done", btmp)
         btmp := Binding.new("type")
         btmp.value := BlockType
         bindName("Block", btmp)
@@ -1617,8 +1622,7 @@ method typecheck(values, *sc) {
         subtype.addType(BooleanType)
         subtype.addType(ListType)
         subtype.addType(VoidType)
-        subtype.addType(NoneType)
-        subtype.addType(NothingType)
+        subtype.addType(DoneType)
         subtype.addType(BlockType)
         initDone := true
     }

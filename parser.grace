@@ -200,8 +200,18 @@ method doannotation {
 
 method dotypeterm {
     if (accept("identifier")) then {
-        pushidentifier
-        generic
+        if(sym.value == "singleton") then {
+            next
+            accept("lparen")
+            next
+            pushidentifier
+            values.push(ast.typeNode.new(values.pop, []))
+            accept("rparen")
+            next
+        } else {
+            pushidentifier
+            generic
+        }
     } else {
         if (accept("lbrace")) then {
             doanontype
@@ -1331,6 +1341,8 @@ method doclass {
         var s := methodsignature(false)
         var csig := s.sig
         var constructorName := s.m
+        domethodreturntype
+        doannotation
         if (!accept("lbrace")) then {
             util.syntax_error("class declaration without body")
         }
@@ -1614,6 +1626,7 @@ method methodsignature(sameline) {
         genericIdents := part.generics
         while {accept("identifier")} do {
             identifier
+            def value = values.pop
             genericIdents.push(values.pop)
             if (accept("comma")) then {
                 next
@@ -1682,14 +1695,7 @@ method methodsignature(sameline) {
             varargs := varargs || tm.varargs
         }
     }
-    if (accept("arrow")) then {
-        // Return dtype
-        next
-        dotyperef
-        dtype := values.pop
-    } else {
-        dtype := false
-    }
+    dtype := domethodreturntype
     var o := object {
         var m := meth
         var sig := signature
@@ -1698,6 +1704,16 @@ method methodsignature(sameline) {
         var generics := genericIdents
     }
     o
+}
+
+method domethodreturntype {
+    if (accept("arrow")) then {
+        next
+        dotyperef
+        values.pop
+    } else {
+        false
+    }
 }
 
 // Accept an import statement. import takes a single identifier
@@ -1796,6 +1812,7 @@ method dotype {
             gens := p.params
             p := p.value
         }
+        doannotation
         expect("op")
         if (sym.value != "=") then {
             util.syntax_error("type declarations require =.")

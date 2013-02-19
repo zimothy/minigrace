@@ -7,10 +7,11 @@ import "util" as util
 
 def gctCache = collections.map.new
 
-method parseGCT(path, filepath) {
+method parseGCT(path) {
     if (gctCache.contains(path)) then {
         return gctCache.get(path)
     }
+    def filepath = "{path}.gct"
     def data = collections.map.new
     util.runOnNew {} else { return data }
     if (io.exists(filepath)) then {
