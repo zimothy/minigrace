@@ -1,4 +1,5 @@
 import "argparse" as argparse
+import "compiler" as compiler
 import "system"   as system
 
 def targets =
@@ -13,17 +14,26 @@ def targets =
     , "js"
     ]
 
-def options = optparse.options
-def optionParser : Parser = parser.new
-    [ option.newFlag("help") shortHand("h")
+def opts = argparse.options
+def options =
+    [ opts.newFlag("help") shortHand("h")
         description("Prints help message")
-    , option.newFlag("make") shortHand("m")
+    , opts.newFlag("make") shortHand("m")
         description("Builds dependencies and links")
-    , option.newFlag("source") shortHand("s")
+    , opts.newFlag("source") shortHand("s")
         description("Builds only the source output")
-    , option.newParameter("target") shortHand("t") values(targets)
+    , opts.newParameter("target") shortHand("t") values(targets)
         description("Sets the build target")
     ]
 
-optionParser.parseArguments(system.arguments)
+def argumentParser : Parser = argparse.parser.new(options)
+def arguments = argumentParser.parseArguments(system.arguments)
+
+var run := false
+for(arguments) do { argument ->
+    match(argument.name)
+      case { "help" -> printHelpMessage }
+}
+
+compiler.compile(arguments)
 

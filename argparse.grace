@@ -22,9 +22,8 @@ type Argument is public = {
     name -> String
 }
 
-// An argument with a name and a value (subtype of Argument).
-type ValueArgument is public = {
-    name -> String
+// An argument with a name and a value.
+type ValueArgument is public = Argument & {
     value -> String
 }
 
@@ -104,14 +103,14 @@ def ParserException is public = Exception.refine("ParserException")
 
 
 // Option type, without parameters.
-type Option is public = {
+type Option = {
     name -> String
     description -> String
     shortHand -> Maybe<String>
 }
 
 // An option with a parameter.
-type Parameter is public = Option & {
+type Parameter = Option & {
     values -> Maybe<List<String>>
 }
 
@@ -135,6 +134,7 @@ def options is public = object {
             description(description)
     }
 
+    // Creates a new parameter that accepts any input.
     method newParameter(name : String)
            description(description : String) -> Parameter is public {
         newOption(name)
@@ -143,6 +143,7 @@ def options is public = object {
             description(description)
     }
 
+    // Creates a new parameter of any input with a short hand.
     method newParameter(name : String)
            shortHand(shortHand : String)
            description(description : String) -> Parameter is public {
@@ -152,7 +153,7 @@ def options is public = object {
             description(description)
     }
 
-    // Creates a new option that takes an parameter.
+    // Creates a new parameter that takes specific values for its input.
     method newParameter(name : String)
            values(values : List<String>)
            description(description : String) -> Parameter is public {
@@ -162,7 +163,7 @@ def options is public = object {
             description(description)
     }
 
-    // Creates a new option with a short hand that takes an parameter.
+    // Creates a new parameter with specific values and a short hand.
     method newParameter(name : String)
            shortHand(shortHand : String)
            values(values : List<String>)
@@ -173,7 +174,7 @@ def options is public = object {
             description(description)
     }
 
-    // Private helper for the above four methods.
+    // Private helper for creating flags.
     method newOption(name' : String)
            shortHand(shortHand' : Option)
            description(description' : String) -> Option is private {
@@ -194,6 +195,7 @@ def options is public = object {
         }
     }
 
+    // Private helper for creating parameters.
     method newOption(name : String)
            shortHand(shortHand : Option)
            values(values' : List<String>)
