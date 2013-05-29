@@ -122,8 +122,79 @@ class OrPattern.new(p1, p2) {
     }
 }
 
-def nothing is public = object {}
-type Nothing = singleton(nothing)
+method do(block : Block) {
+    block.apply
+}
 
-type Maybe<T> is public = Nothing | T
+type Maybe<T> is public = {
+    // Evaluates whether this is a value.
+    isValue -> Boolean
+
+    // Evaluates whether this is nothing.
+    isNothing -> Boolean
+
+    // This value. Will produce an exception if this is nothing.
+    value -> T
+
+    // Produces this value, or the right value if this is nothing.
+    ||(other : T) -> T
+
+    // Produces the right value if is a value, or nothing if this is nothing.
+    then<R>(other : Maybe<R>) -> Maybe<R>
+
+    // Evaluates the right value with this value, or nothing if this is nothing.
+    bind<R>(block : Block<T, Maybe<R>>) -> Maybe<R>
+}
+
+def NothingException = Exception.refine("NothingException")
+
+class nothing<T> -> Maybe<T> is public {
+    def isValue : Boolean is readable, public = false
+    def isNothing : Boolean is readable, public = true
+
+    method value -> T is public {
+        NothingException.raise("Cannot retrieve value of Nothing")
+    }
+
+    method ||(other : T) -> T is public { other }
+
+    method then<R>(_ : Maybe<R>) -> Maybe<R> is public { nothing<R> }
+    method bind<R>(_ : Block<T, Maybe<R>>) -> Maybe<R> is public {
+        nothing<R>
+    }
+
+    method ==(value : Object) -> Boolean is public, override {
+        match(value) case { maybe : Maybe<T> ->
+            maybe.isNothing
+        } else { false }
+    }
+
+    method asString -> String is public, override {
+        "Nothing"
+    }
+}
+
+class just<T>(value : T) -> Maybe<T> is public {
+    def isValue : Boolean is readable, public = true
+    def isNothing : Boolean is readable, public = false
+
+    value is readable, public
+
+    method ||(_ : T) -> T is public { value }
+
+    method then<R>(other : Maybe<R>) -> Maybe<R> is public { other }
+    method bind<R>(other : Block<T, Maybe<R>>) -> Maybe<R> is public {
+        other.apply(value)
+    }
+
+    method ==(value : Object) -> Boolean is public, override {
+        match(value) case { maybe : Maybe<T> ->
+            maybe.isValue && { maybe.value == value }
+        } else { false }
+    }
+
+    method asString -> String is public, override {
+        "Just({value})"
+    }
+}
 
