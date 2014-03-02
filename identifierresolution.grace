@@ -852,6 +852,8 @@ method resolve(values) {
     builtinObj.add "prelude" as "def"
     builtinObj.add "_prelude" as "def"
     builtinObj.add "..." as "def"
+    builtinObj.add "brand" as "def"
+    builtinObj.add "branded"
     // Historical - should be removed eventually
     if (!util.extensions.contains("NativePrelude")) then {
         var hadDialect := false

@@ -2662,6 +2662,42 @@ method doclass {
         o.generics := s.generics
         if (false != anns) then {
             o.annotations.extend(anns)
+            for (anns) do { ann ->
+                if ((ann.kind == "call").andAlso {
+                    ann.value.value == "branded"
+                }) then {
+                    def args = ann.with.at(1).args
+                    if (args.size == 0) then {
+                        errormessages.syntaxError "A branding must specify brands"
+                            atPosition(sym.line, sym.linePos)
+                    }
+                    for (args) do { arg ->
+                        if (arg.kind != "identifier") then {
+                            errormessages.syntaxError "A branding must be by name"
+                                atPosition(sym.line, sym.linePos)
+                        }
+                        def mname = brandMethods.get(arg.value)
+                        def ident = ast.identifierNode.new(mname, false)
+                        o.value.push(ast.methodNode.new(ident,
+                            [ast.signaturePart.new(mname)], [], false))
+                    }
+                    if ((false == o.dtype) && (args.size == 1)) then {
+                        o.dtype := ast.typeNode.new(args.at(1).value, [])
+                    } else {
+                        var name := "Intersection<"
+                        var index := if (false != o.dtype) then {
+                            name := "{name}{o.dtype.value}"; 1
+                        } else {
+                            name := "{name}{args.at(1).value}"; 2
+                        }
+                        while { index <= args.size } do {
+                            name := "{name}&{args.at(index).value}"
+                            index := index + 1
+                        }
+                        o.dtype := ast.typeNode.new("{name}>", [])
+                    }
+                }
+            }
         } else {
             if (defaultMethodVisibility == "confidential") then {
                 o.annotations.push(ast.identifierNode.new("confidential",
@@ -3186,6 +3222,23 @@ method doanontype {
         values.push(t)
     }
 }
+
+def brandMethods = object {
+    def map = collections.map.new
+    var uniqueCounter := 1
+
+    method addFor(name : String) -> String {
+        def mname = "_branded_{util.modname}_{uniqueCounter}"
+        map.put(name, mname)
+        uniqueCounter := uniqueCounter + 1
+        mname
+    }
+
+    method get(name : String) -> String {
+        map.get(name)
+    }
+}
+
 // Accept a type declaration.
 method dotype {
     if (accept("keyword") && (sym.value == "type")) then {
@@ -3230,6 +3283,13 @@ method dotype {
             t.generics := gens
             if (false != anns) then {
                 t.annotations.extend(anns)
+                for (anns) do { ann ->
+                    if (ann.value == "brand") then {
+                        def name = brandMethods.addFor(t.value)
+                        t.methods.push(ast.methodTypeNode.new(name,
+                            [ast.signaturePart.new(name)], false))
+                    }
+                }
             }
             values.push(t)
         } else {
